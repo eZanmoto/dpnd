@@ -1,0 +1,19 @@
+[package]
+authors = ["Sean Kelleher <ezanmoto@gmail.com>"]
+categories = [
+    "command-line-utilities",
+    "development-tools",
+    "development-tools::build-utils",
+]
+description = "A tool for pulling project dependencies"
+keywords = ["dependencies"]
+license = "MIT"
+name = "dpnd"
+readme = "README.md"
+repository = "https://github.com/ezanmoto/dpnd"
+version = "0.1.0"
+
+[dev-dependencies]
+assert_cmd = "1.0.1"
+indoc = "1.0.2"
+maplit = "1.0.2"
