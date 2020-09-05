@@ -15,7 +15,7 @@ bash scripts/docker_rbuild.sh \
 
 docker run \
     --rm \
-    --mount='type=volume,src=wush_cargo_cache,dst=/cargo' \
+    --mount='type=volume,src=dpnd_cargo_cache,dst=/cargo' \
     "$build_img:latest" \
     chmod 0777 /cargo
 
@@ -23,7 +23,7 @@ docker run \
     --interactive \
     --tty \
     --rm \
-    --mount='type=volume,src=wush_cargo_cache,dst=/cargo' \
+    --mount='type=volume,src=dpnd_cargo_cache,dst=/cargo' \
     --env='CARGO_HOME=/cargo' \
     --user="$(id -u):$(id -g)" \
     --mount="type=bind,src=$(pwd),dst=/app" \
