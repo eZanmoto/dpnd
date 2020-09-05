@@ -474,3 +474,26 @@ fn dep_output_dir_is_file() {
         .stdout("")
         .stderr("Couldn't create 'deps/my_scripts', the output directory for the 'my_scripts' dependency: File exists (os error 17)\n");
 }
+
+#[test]
+// Given the dependency file contains two dependencies with the same name
+// When the command is run
+// Then the command fails with an error
+fn dup_dep_names() {
+    let mut cmd = setup_test_with_deps_file(
+        "dup_dep_names",
+        indoc::indoc! {"
+            target/deps
+
+            my_scripts git git://localhost/my_scripts.git master
+            my_scripts git git://localhost/my_scripts.git master
+        "},
+    );
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr("Line 4: A dependency named 'my_scripts' is already defined on line 3\n");
+}

@@ -167,7 +167,7 @@ fn parse_deps<'a>(
 )
     -> Result<Vec<Dependency<'a, String>>, ParseDepsError>
 {
-    let mut deps = vec![];
+    let mut dep_defns: Vec<(Dependency<'a, String>, usize)> = vec![];
 
     for (i, line) in lines {
         let ln_num = i + 1;
@@ -179,13 +179,22 @@ fn parse_deps<'a>(
 
         let words: Vec<&str> = ln.split_ascii_whitespace().collect();
         if words.len() != 4 {
-            return Err(ParseDepsError::InvalidDependencySpec(
+            return Err(ParseDepsError::InvalidDepSpec(
                 ln_num,
                 ln.to_string(),
             ));
         }
 
         let local_name = words[0].to_string();
+        for (dep, defn_ln_num) in &dep_defns {
+            if dep.local_name == local_name {
+                return Err(ParseDepsError::DupDepName(
+                    ln_num,
+                    local_name,
+                    *defn_ln_num,
+                ));
+            }
+        }
 
         let tool_name = words[1].to_string();
         let tool = match tool_factories.get(&tool_name) {
@@ -197,13 +206,23 @@ fn parse_deps<'a>(
             )),
         };
 
-        deps.push(Dependency {
-            local_name,
-            tool,
-            source: words[2].to_string(),
-            version: words[3].to_string(),
-        });
+        dep_defns.push((
+            Dependency {
+                local_name,
+                tool,
+                source: words[2].to_string(),
+                version: words[3].to_string(),
+            },
+            ln_num,
+        ));
     }
+
+    let deps =
+        dep_defns.into_iter()
+            .map(|(dep, _)| {
+                dep
+            })
+            .collect();
 
     Ok(deps)
 }
@@ -216,7 +235,8 @@ struct Dependency<'a, E> {
 }
 
 enum ParseDepsError {
-    InvalidDependencySpec(usize, String),
+    DupDepName(usize, String, usize),
+    InvalidDepSpec(usize, String),
     UnknownTool(usize, String, String),
 }
 
@@ -245,7 +265,15 @@ fn print_install_error(err: InstallError<String>, deps_file_name: &str) {
                     ),
                 ParseDepsConfError::ParseDepsFailed(err) =>
                     match err {
-                        ParseDepsError::InvalidDependencySpec(ln_num, ln) =>
+                        ParseDepsError::DupDepName(ln_num, dep, orig_ln_num) =>
+                            eprintln!(
+                                "Line {}: A dependency named '{}' is already \
+                                 defined on line {}",
+                                ln_num,
+                                dep,
+                                orig_ln_num,
+                            ),
+                        ParseDepsError::InvalidDepSpec(ln_num, ln) =>
                             eprintln!(
                                 "Line {}: Invalid dependency specification: \
                                  '{}'",
