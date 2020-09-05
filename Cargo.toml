@@ -11,7 +11,17 @@ license = "MIT"
 name = "dpnd"
 readme = "README.md"
 repository = "https://github.com/ezanmoto/dpnd"
-version = "0.1.1"
+version = "0.1.2"
+
+# See <https://crates.io/crates/regex> for more information on this section. The
+# most notable reasoning is as follows:
+#
+# > This crate comes with several features that permit tweaking the trade off
+# > between binary size, compilation time and runtime performance.
+[dependencies.regex]
+version = "1.3.9"
+default-features = false
+features = ["std"]
 
 [dev-dependencies]
 assert_cmd = "1.0.1"

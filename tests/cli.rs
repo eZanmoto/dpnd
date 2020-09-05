@@ -497,3 +497,29 @@ fn dup_dep_names() {
         .stdout("")
         .stderr("Line 4: A dependency named 'my_scripts' is already defined on line 3\n");
 }
+
+#[test]
+// Given the dependency file contains a dependency with an invalid name
+// When the command is run
+// Then the command fails with an error
+fn invalid_dep_name() {
+    let mut cmd = setup_test_with_deps_file(
+        "invalid_dep_name",
+        indoc::indoc! {"
+            target/deps
+
+            my_scripts? git git://localhost/my_scripts.git master
+        "},
+    );
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(
+            "Line 3: 'my_scripts?' contains an invalid character ('?') at \
+             position 11; dependency names can only contain numbers, letters, \
+             hyphens, underscores and periods\n",
+        );
+}

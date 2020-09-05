@@ -20,16 +20,23 @@ use dep_tools::DepToolFactory;
 use dep_tools::FetchError;
 use dep_tools::GitFactory;
 
+extern crate regex;
+
+use regex::Regex;
+
 fn main() {
     let deps_file_name = "dpnd.txt";
+    let bad_dep_name_chars = Regex::new(r"[^a-zA-Z._-]").unwrap();
 
-    if let Err(err) = install(&deps_file_name) {
+    if let Err(err) = install(&deps_file_name, &bad_dep_name_chars) {
         print_install_error(err, deps_file_name);
         process::exit(1);
     }
 }
 
-fn install(deps_file_name: &str) -> Result<(), InstallError<String>> {
+fn install(deps_file_name: &str, bad_dep_name_chars: &Regex)
+    -> Result<(), InstallError<String>>
+{
     let cwd = wrap_err!(
         env::current_dir(),
         InstallError::GetCurrentDirFailed,
@@ -50,7 +57,7 @@ fn install(deps_file_name: &str) -> Result<(), InstallError<String>> {
     tool_factories.insert("git".to_string(), &GitFactory {});
 
     let mut conf = wrap_err!(
-        parse_deps_conf(&deps_spec, &tool_factories),
+        parse_deps_conf(&deps_spec, bad_dep_name_chars, &tool_factories),
         InstallError::ParseDepsConfFailed,
     );
 
@@ -113,6 +120,7 @@ fn read_deps_file(start: PathBuf, deps_file_name: &str)
 
 fn parse_deps_conf<'a>(
     conts: &str,
+    bad_dep_name_chars: &Regex,
     tool_factories: &HashMap<String, &'a (dyn DepToolFactory<String> + 'a)>,
 )
     -> Result<DepsConf<'a, String>, ParseDepsConfError>
@@ -123,7 +131,7 @@ fn parse_deps_conf<'a>(
         Ok(DepsConf {
             output_dir,
             deps: wrap_err!(
-                parse_deps(&mut lines, &tool_factories),
+                parse_deps(&mut lines, bad_dep_name_chars, &tool_factories),
                 ParseDepsConfError::ParseDepsFailed,
             ),
         })
@@ -163,6 +171,7 @@ fn conf_line_is_skippable(ln: &str) -> bool {
 
 fn parse_deps<'a>(
     lines: &mut Enumerate<Lines>,
+    bad_dep_name_chars: &Regex,
     tool_factories: &HashMap<String, &'a (dyn DepToolFactory<String> + 'a)>,
 )
     -> Result<Vec<Dependency<'a, String>>, ParseDepsError>
@@ -186,6 +195,14 @@ fn parse_deps<'a>(
         }
 
         let local_name = words[0].to_string();
+        if let Some(found) = bad_dep_name_chars.find(&local_name) {
+            return Err(ParseDepsError::InvalidDepName(
+                ln_num,
+                local_name.clone(),
+                found.start(),
+            ));
+        }
+
         for (dep, defn_ln_num) in &dep_defns {
             if dep.local_name == local_name {
                 return Err(ParseDepsError::DupDepName(
@@ -236,6 +253,7 @@ struct Dependency<'a, E> {
 
 enum ParseDepsError {
     DupDepName(usize, String, usize),
+    InvalidDepName(usize, String, usize),
     InvalidDepSpec(usize, String),
     UnknownTool(usize, String, String),
 }
@@ -257,44 +275,7 @@ fn print_install_error(err: InstallError<String>, deps_file_name: &str) {
                 err.utf8_error().valid_up_to(),
             ),
         InstallError::ParseDepsConfFailed(err) =>
-            match err {
-                ParseDepsConfError::MissingOutputDir =>
-                    eprintln!(
-                        "The dependency file doesn't contain an output \
-                         directory"
-                    ),
-                ParseDepsConfError::ParseDepsFailed(err) =>
-                    match err {
-                        ParseDepsError::DupDepName(ln_num, dep, orig_ln_num) =>
-                            eprintln!(
-                                "Line {}: A dependency named '{}' is already \
-                                 defined on line {}",
-                                ln_num,
-                                dep,
-                                orig_ln_num,
-                            ),
-                        ParseDepsError::InvalidDepSpec(ln_num, ln) =>
-                            eprintln!(
-                                "Line {}: Invalid dependency specification: \
-                                 '{}'",
-                                ln_num,
-                                ln,
-                            ),
-                        ParseDepsError::UnknownTool(
-                            ln_num,
-                            dep_name,
-                            tool_name,
-                        ) =>
-                            eprintln!(
-                                "Line {}: The '{}' dependency specifies an \
-                                 invalid tool name ('{}'); the supported tool \
-                                 is 'git'",
-                                ln_num,
-                                dep_name,
-                                tool_name,
-                            ),
-                    },
-            },
+            print_parse_deps_error(err),
         InstallError::CreateMainOutputDirFailed(io_err, path) =>
             eprintln!(
                 "Couldn't create {}, the main output directory: {}",
@@ -325,6 +306,62 @@ fn print_install_error(err: InstallError<String>, deps_file_name: &str) {
                         dep_name,
                         msg,
                     ),
+            },
+    }
+}
+
+fn print_parse_deps_error(err: ParseDepsConfError) {
+    match err {
+        ParseDepsConfError::MissingOutputDir =>
+            eprintln!(
+                "The dependency file doesn't contain an output directory"
+            ),
+        ParseDepsConfError::ParseDepsFailed(err) =>
+            match err {
+                ParseDepsError::DupDepName(ln_num, dep, orig_ln_num) => {
+                    eprintln!(
+                        "Line {}: A dependency named '{}' is already defined \
+                         on line {}",
+                        ln_num,
+                        dep,
+                        orig_ln_num,
+                    )
+                },
+                ParseDepsError::InvalidDepName(ln_num, dep, bad_char_idx) => {
+                    let mut bad_char = "".to_string();
+                    if let Some(chr) = dep.chars().nth(bad_char_idx) {
+                        bad_char = format!(" ('{}')", chr);
+                    }
+                    eprintln!(
+                        "Line {}: '{}' contains an invalid character{} at \
+                         position {}; dependency names can only contain \
+                         numbers, letters, hyphens, underscores and periods",
+                        ln_num,
+                        dep,
+                        bad_char,
+                        bad_char_idx + 1,
+                    )
+                },
+                ParseDepsError::InvalidDepSpec(ln_num, ln) => {
+                    eprintln!(
+                        "Line {}: Invalid dependency specification: '{}'",
+                        ln_num,
+                        ln,
+                    )
+                },
+                ParseDepsError::UnknownTool(
+                    ln_num,
+                    dep_name,
+                    tool_name,
+                ) => {
+                    eprintln!(
+                        "Line {}: The '{}' dependency specifies an invalid \
+                         tool name ('{}'); the supported tool is 'git'",
+                        ln_num,
+                        dep_name,
+                        tool_name,
+                    )
+                },
             },
     }
 }
