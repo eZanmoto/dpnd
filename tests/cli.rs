@@ -8,6 +8,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::panic;
 use std::process::Command;
+use std::string::ToString;
 
 #[macro_use]
 extern crate maplit;
@@ -17,35 +18,18 @@ extern crate indoc;
 use assert_cmd::Command as AssertCommand;
 
 #[test]
-// Given the dependency file is in an empty directory and its dependencies are
-//     available
+// Given the dependency file is in an empty directory and the newest version of
+//     its dependency is specified
 // When the command is run
 // Then dependencies are pulled to the correct locations with the correct
 //     contents
-fn dependencies_pulled_correctly() {
-    let root_test_dir = create_root_test_dir("dependencies_pulled_correctly");
-    let dep_dir = create_test_dir(root_test_dir.clone(), "my_scripts.git");
-    let scratch_dir = create_test_dir(root_test_dir.clone(), "scratch");
-    create_bare_git_repo(
-        &dep_dir,
-        &scratch_dir,
-        "script.sh",
-        "echo 'hello, world!'",
-    );
-    let test_proj_dir = create_test_dir(root_test_dir.clone(), "proj");
-    let deps_file_conts = indoc::indoc! {"
-        # This is the output directory.
-        target/deps
-
-        # These are the dependencies.
-        my_scripts git git://localhost/my_scripts.git master
-    "};
+fn new_dep_vsn_pulled_correctly() {
+    let TestSetup{root_dir, proj_dir, deps_file_conts} =
+        create_test_setup("new_dep_vsn_pulled_correctly", 1);
     let cmd_result = with_git_server(
-        root_test_dir,
+        root_dir,
         || {
-            fs::write(format!("{}/dpnd.txt", test_proj_dir), &deps_file_conts)
-                .expect("couldn't write dependency file");
-            let mut cmd = new_test_cmd(test_proj_dir.clone());
+            let mut cmd = new_test_cmd(proj_dir.clone());
 
             cmd.assert()
         },
@@ -53,7 +37,7 @@ fn dependencies_pulled_correctly() {
 
     cmd_result.code(0).stdout("").stderr("");
     assert_fs_contents(
-        &test_proj_dir,
+        &proj_dir,
         &Node::Dir(hashmap! {
             "dpnd.txt" => Node::File(&deps_file_conts),
             "target" => Node::Dir(hashmap!{
@@ -66,6 +50,48 @@ fn dependencies_pulled_correctly() {
             }),
         }),
     );
+}
+
+fn create_test_setup(root_test_dir_name: &str, dep_commit_num: usize)
+    -> TestSetup
+{
+    let root_dir = create_root_test_dir(root_test_dir_name);
+    let dep_dir = create_test_dir(root_dir.clone(), "my_scripts.git");
+    let scratch_dir = create_test_dir(root_dir.clone(), "scratch");
+    create_bare_git_repo(
+        &dep_dir,
+        &scratch_dir,
+        &[
+            hashmap!{"script.sh" => "echo 'hello world'"},
+            hashmap!{"script.sh" => "echo 'hello, world!'"},
+        ],
+    );
+    let proj_dir = create_test_dir(root_dir.clone(), "proj");
+    let repo_hashes = get_repo_hashes(&dep_dir);
+    let deps_file_conts = indoc::formatdoc! {
+        "
+            # This is the output directory.
+            target/deps
+
+            # These are the dependencies.
+            my_scripts git git://localhost/my_scripts.git {}
+        ",
+        repo_hashes[dep_commit_num],
+    };
+    fs::write(format!("{}/dpnd.txt", proj_dir), &deps_file_conts)
+        .expect("couldn't write dependency file");
+
+    TestSetup{
+        root_dir,
+        proj_dir,
+        deps_file_conts,
+    }
+}
+
+struct TestSetup {
+    root_dir: String,
+    proj_dir: String,
+    deps_file_conts: String,
 }
 
 fn create_root_test_dir(name: &str) -> String {
@@ -86,51 +112,63 @@ fn create_test_dir(dir: String, name: &str) -> String {
 fn create_bare_git_repo(
     repo_dir: &str,
     scratch_dir: &str,
-    fname: &str,
-    fconts: &str,
+    fs_states: &[HashMap<&str, &str>],
 ) {
-    fs::write(format!("{}/{}", &scratch_dir, fname), fconts)
-        .expect("couldn't write test file");
-
     let gits_args = &[
         vec!["init"],
         vec!["config", "user.name", "Test"],
         vec!["config", "user.email", "test@example.com"],
-        vec!["add", "--all"],
-        vec!["commit", "--message", "Initial commit"],
-        vec!["clone", "--bare", &scratch_dir, &repo_dir],
     ];
     for git_args in gits_args {
-        run_cmd(scratch_dir.to_string(), "git", git_args);
+        run_cmd(scratch_dir, "git", git_args);
     }
+
+    for fs_state in fs_states {
+        for (fname, fconts) in fs_state {
+            fs::write(format!("{}/{}", &scratch_dir, fname), fconts)
+                .expect("couldn't write test file");
+        }
+
+        let gits_args = &[
+            vec!["add", "--all"],
+            vec!["commit", "--message", "Initial commit"],
+        ];
+        for git_args in gits_args {
+            run_cmd(scratch_dir, "git", git_args);
+        }
+    }
+
+    let git_args = &["clone", "--bare", &scratch_dir, &repo_dir];
+    run_cmd(scratch_dir, "git", git_args);
 }
 
-fn run_cmd<I, S>(dir: String, cmd: &str, args: I)
+fn run_cmd<I, S>(dir: &str, cmd: &str, args: I) -> String
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    AssertCommand::new(cmd)
+    let output = Command::new(cmd)
         .args(args)
         .current_dir(dir)
         .env_clear()
-        .assert()
-        .code(0);
+        .output()
+        .unwrap_or_else(|_|
+            panic!("couldn't run `{}`", cmd)
+        );
+
+    assert!(output.status.success(), "`{}` failed", cmd);
+
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|_|
+            panic!("couldn't convert `{}` output to `String`", cmd)
+        )
 }
 
 fn with_git_server<F, T>(dir: String, f: F) -> T
 where
     F: FnOnce() -> T,
 {
-    let git_exec_path_output = Command::new("git")
-        .args(&["--exec-path"])
-        .output()
-        .expect("couldn't get Git execution path");
-
-    assert!(git_exec_path_output.status.success());
-
-    let git_exec_path = String::from_utf8(git_exec_path_output.stdout)
-        .expect("couldn't convert `git --exec-path` output to `String`");
+    let git_exec_path = run_cmd(&dir, "git", &["--exec-path"]);
 
     let git_exec_path = git_exec_path
         .strip_suffix("\n")
@@ -246,6 +284,50 @@ fn assert_fs_contents<'a>(path: &str, exp: &Node<'a>) {
             }
         }
     }
+}
+
+#[test]
+// Given the dependency file is in an empty directory and the oldest version of
+//     its dependency is specified
+// When the command is run
+// Then dependencies are pulled to the correct locations with the correct
+//     contents
+fn old_dep_vsn_pulled_correctly() {
+    let TestSetup{root_dir, proj_dir, deps_file_conts} =
+        create_test_setup("old_dep_vsn_pulled_correctly", 0);
+    let cmd_result = with_git_server(
+        root_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap! {
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello world'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+// `get_repo_hashes` returns hashes in chronological order, i.e. the first
+// entry contains the hash of the oldest commit.
+fn get_repo_hashes(repo_dir: &str) -> Vec<String> {
+    run_cmd(&repo_dir, "git", &["log", "--reverse", "--format=%H"])
+        .split_terminator('\n')
+        .map(ToString::to_string)
+        .collect()
 }
 
 #[test]
@@ -398,8 +480,9 @@ fn unavailable_git_proj_vsn() {
     create_bare_git_repo(
         &dep_dir,
         &scratch_dir,
-        "script.sh",
-        "echo 'hello, world!'",
+        &[
+            hashmap!{"script.sh" => "echo 'hello, world!'"},
+        ],
     );
     let test_proj_dir = create_test_dir(root_test_dir.clone(), "proj");
     let deps_file_conts = indoc::indoc! {"
