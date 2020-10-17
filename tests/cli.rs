@@ -344,7 +344,10 @@ fn missing_deps_file() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("Couldn't find the dependency file 'dpnd.txt' in the current directory or parent directories\n");
+        .stderr(
+            "Couldn't find the dependency file 'dpnd.txt' in the current \
+             directory or parent directories\n",
+        );
 }
 
 fn setup_test_with_deps_file<C: AsRef<[u8]>>(
@@ -391,7 +394,10 @@ fn deps_file_invalid_utf8() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("The dependency file contains an invalid UTF-8 sequence after byte 4\n");
+        .stderr(
+            "The dependency file contains an invalid UTF-8 sequence after \
+             byte 4\n",
+        );
 }
 
 #[test]
@@ -413,7 +419,10 @@ fn deps_file_invalid_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("Line 3: Invalid dependency specification: 'proj tool source version extra'\n");
+        .stderr(
+            "Line 3: Invalid dependency specification: 'proj tool source \
+             version extra'\n",
+        );
 }
 
 #[test]
@@ -435,7 +444,10 @@ fn deps_file_invalid_tool() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("Line 3: The 'proj' dependency specifies an invalid tool name ('tool'); the supported tool is 'git'\n");
+        .stderr(
+            "Line 3: The 'proj' dependency specifies an invalid tool name \
+             ('tool'); the supported tool is 'git'\n",
+        );
 }
 
 #[test]
@@ -528,7 +540,10 @@ fn main_output_dir_is_file() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("Couldn't create 'target/deps', the main output directory: Not a directory (os error 20)\n");
+        .stderr(
+            "Couldn't create 'target/deps', the main output directory: Not a \
+             directory (os error 20)\n",
+        );
 }
 
 #[test]
@@ -555,7 +570,10 @@ fn dep_output_dir_is_file() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("Couldn't create 'deps/my_scripts', the output directory for the 'my_scripts' dependency: File exists (os error 17)\n");
+        .stderr(
+            "Couldn't create 'deps/my_scripts', the output directory for the \
+             'my_scripts' dependency: File exists (os error 17)\n",
+        );
 }
 
 #[test]
@@ -578,7 +596,10 @@ fn dup_dep_names() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("Line 4: A dependency named 'my_scripts' is already defined on line 3\n");
+        .stderr(
+            "Line 4: A dependency named 'my_scripts' is already defined on \
+             line 3\n",
+        );
 }
 
 #[test]
