@@ -42,7 +42,7 @@ fn install(deps_file_name: &str, bad_dep_name_chars: &Regex)
         InstallError::GetCurrentDirFailed,
     );
 
-    let (_deps_dir, deps_spec) = match read_deps_file(cwd, &deps_file_name) {
+    let (deps_dir, deps_spec) = match read_deps_file(cwd, &deps_file_name) {
         Some(v) => v,
         None => return Err(InstallError::NoDepsFileFound),
     };
@@ -61,14 +61,15 @@ fn install(deps_file_name: &str, bad_dep_name_chars: &Regex)
         InstallError::ParseDepsConfFailed,
     );
 
+    let output_dir = deps_dir.join(conf.output_dir);
     wrap_err!(
-        fs::create_dir_all(&conf.output_dir),
+        fs::create_dir_all(&output_dir),
         InstallError::CreateMainOutputDirFailed,
-        conf.output_dir,
+        output_dir,
     );
 
     while let Some(dep) = conf.deps.pop() {
-        let dir = conf.output_dir.join(&dep.local_name);
+        let dir = output_dir.join(&dep.local_name);
         wrap_err!(
             fs::create_dir(&dir),
             InstallError::CreateDepOutputDirFailed,

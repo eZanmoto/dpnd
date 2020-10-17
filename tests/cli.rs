@@ -38,7 +38,7 @@ fn new_dep_vsn_pulled_correctly() {
     cmd_result.code(0).stdout("").stderr("");
     assert_fs_contents(
         &proj_dir,
-        &Node::Dir(hashmap! {
+        &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
             "target" => Node::Dir(hashmap!{
                 "deps" => Node::Dir(hashmap!{
@@ -162,6 +162,15 @@ where
         .unwrap_or_else(|_|
             panic!("couldn't convert `{}` output to `String`", cmd)
         )
+}
+
+// `get_repo_hashes` returns hashes in chronological order, i.e. the first
+// entry contains the hash of the oldest commit.
+fn get_repo_hashes(repo_dir: &str) -> Vec<String> {
+    run_cmd(&repo_dir, "git", &["log", "--reverse", "--format=%H"])
+        .split_terminator('\n')
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn with_git_server<F, T>(dir: String, f: F) -> T
@@ -307,7 +316,7 @@ fn old_dep_vsn_pulled_correctly() {
     cmd_result.code(0).stdout("").stderr("");
     assert_fs_contents(
         &proj_dir,
-        &Node::Dir(hashmap! {
+        &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
             "target" => Node::Dir(hashmap!{
                 "deps" => Node::Dir(hashmap!{
@@ -321,13 +330,43 @@ fn old_dep_vsn_pulled_correctly() {
     );
 }
 
-// `get_repo_hashes` returns hashes in chronological order, i.e. the first
-// entry contains the hash of the oldest commit.
-fn get_repo_hashes(repo_dir: &str) -> Vec<String> {
-    run_cmd(&repo_dir, "git", &["log", "--reverse", "--format=%H"])
-        .split_terminator('\n')
-        .map(ToString::to_string)
-        .collect()
+#[test]
+// Given the dependency file is in a parent directory of the directory the
+//     command is run in
+// When the command is run
+// Then dependencies are pulled to the correct locations relative to the
+//     dependency file
+fn run_in_proj_subdir() {
+    let TestSetup{root_dir, proj_dir, deps_file_conts} =
+        create_test_setup("run_in_proj_subdir", 1);
+    let test_subdir = proj_dir.clone() + "/sub";
+    fs::create_dir(&test_subdir)
+        .expect("couldn't create directory");
+    let cmd_result = with_git_server(
+        root_dir,
+        || {
+            let mut cmd = new_test_cmd(test_subdir);
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "sub" => Node::Dir(hashmap!{}),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
 }
 
 #[test]
@@ -533,17 +572,18 @@ fn main_output_dir_is_file() {
     let deps_file_conts = "target/deps\n";
     fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
         .expect("couldn't write dependency file");
-    let mut cmd = new_test_cmd(test_proj_dir);
+    let mut cmd = new_test_cmd(test_proj_dir.clone());
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Couldn't create 'target/deps', the main output directory: Not a \
-             directory (os error 20)\n",
-        );
+        .stderr(format!(
+            "Couldn't create '{}/target/deps', the main output directory: Not \
+             a directory (os error 20)\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -563,17 +603,18 @@ fn dep_output_dir_is_file() {
     "};
     fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
         .expect("couldn't write dependency file");
-    let mut cmd = new_test_cmd(test_proj_dir);
+    let mut cmd = new_test_cmd(test_proj_dir.clone());
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Couldn't create 'deps/my_scripts', the output directory for the \
-             'my_scripts' dependency: File exists (os error 17)\n",
-        );
+        .stderr(format!(
+            "Couldn't create '{}/deps/my_scripts', the output directory for \
+             the 'my_scripts' dependency: File exists (os error 17)\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
