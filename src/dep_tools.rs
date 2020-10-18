@@ -12,6 +12,10 @@ pub trait DepToolFactory<E> {
 }
 
 pub trait DepTool<E> {
+    // `name` returns an identifying name that should be unique across all
+    // dependency tools.
+    fn name(&self) -> String;
+
     fn fetch(
         &self,
         source: String,
@@ -36,6 +40,10 @@ impl DepToolFactory<String> for GitFactory {
 pub struct Git {}
 
 impl DepTool<String> for Git {
+    fn name(&self) -> String {
+        "git".to_string()
+    }
+
     fn fetch(&self, src: String, vsn: String, out_dir: &PathBuf)
         -> Result<(), FetchError<String>>
     {
