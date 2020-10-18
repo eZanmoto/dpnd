@@ -17,7 +17,8 @@ check_intg: $(tgt_test_dir)
 		cargo test \
 			-- \
 			--show-output \
-			--test-threads=1
+			--test-threads=1 \
+			$(TESTS)
 
 .PHONY: check_lint
 check_lint:

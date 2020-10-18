@@ -75,6 +75,12 @@ Docker by running the following:
 
     $ bash scripts/with_build_env.sh make check
 
+A subset of integration tests can be run by passing `TESTS` to Make:
+
+    $ make check_intg TESTS=add
+
+The command above will run all integration tests whose name contains "add".
+
 FAQs
 ----
 
