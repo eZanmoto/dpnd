@@ -88,6 +88,26 @@ Do the following:
         },
     };
 
+Furthermore, `match` expressions that don't use blocks should be consistent in
+terms of newlines. For example, instead of the following:
+
+    match err {
+        InstallError::GetCurrentDirFailed(io_err) =>
+            eprintln!("Couldn't get the current directory: {}", io_err),
+        InstallError::InstallDepsError(err) => print_install_deps_error(err),
+        // ...
+    }
+
+Do the following:
+
+    match err {
+        InstallError::GetCurrentDirFailed(io_err) =>
+            eprintln!("Couldn't get the current directory: {}", io_err),
+        InstallError::InstallDepsError(err) =>
+            print_install_deps_error(err),
+        // ...
+    }
+
 ### Functions
 
 #### Return type line
