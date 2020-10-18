@@ -24,10 +24,15 @@ use assert_cmd::Command as AssertCommand;
 // Then dependencies are pulled to the correct locations with the correct
 //     contents
 fn new_dep_vsn_pulled_correctly() {
-    let TestSetup{root_dir, proj_dir, deps_file_conts} =
-        create_test_setup("new_dep_vsn_pulled_correctly", 1);
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_file_conts, ..} =
+        create_test_setup(
+            "new_dep_vsn_pulled_correctly",
+            &test_deps,
+            &hashmap!{"my_scripts" => 1},
+        );
     let cmd_result = with_git_server(
-        root_dir,
+        dep_srcs_dir,
         || {
             let mut cmd = new_test_cmd(proj_dir.clone());
 
@@ -42,6 +47,7 @@ fn new_dep_vsn_pulled_correctly() {
             "dpnd.txt" => Node::File(&deps_file_conts),
             "target" => Node::Dir(hashmap!{
                 "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
                     "my_scripts" => Node::Dir(hashmap!{
                         ".git" => Node::AnyDir,
                         "script.sh" => Node::File("echo 'hello, world!'"),
@@ -52,44 +58,69 @@ fn new_dep_vsn_pulled_correctly() {
     );
 }
 
-fn create_test_setup(root_test_dir_name: &str, dep_commit_num: usize)
-    -> TestSetup
-{
-    let root_dir = create_root_test_dir(root_test_dir_name);
-    let dep_dir = create_test_dir(root_dir.clone(), "my_scripts.git");
-    let scratch_dir = create_test_dir(root_dir.clone(), "scratch");
-    create_bare_git_repo(
-        &dep_dir,
-        &scratch_dir,
-        &[
+fn test_deps() -> HashMap<&'static str, Vec<HashMap<&'static str, &'static str>>> {
+    hashmap!{
+        "my_scripts" => vec![
             hashmap!{"script.sh" => "echo 'hello world'"},
             hashmap!{"script.sh" => "echo 'hello, world!'"},
         ],
-    );
-    let proj_dir = create_test_dir(root_dir.clone(), "proj");
-    let repo_hashes = get_repo_hashes(&dep_dir);
-    let deps_file_conts = indoc::formatdoc! {
-        "
-            # This is the output directory.
-            target/deps
+        "your_scripts" => vec![
+            hashmap!{"script.sh" => "echo 'hello, sun!'"},
+        ],
+        "their_scripts" => vec![
+            hashmap!{"script.sh" => "echo 'hello, moon!'"},
+        ],
+    }
+}
 
-            # These are the dependencies.
-            my_scripts git git://localhost/my_scripts.git {}
-        ",
-        repo_hashes[dep_commit_num],
-    };
-    fs::write(format!("{}/dpnd.txt", proj_dir), &deps_file_conts)
-        .expect("couldn't write dependency file");
+// `create_test_setup` does the following, in order:
+//
+// 1. Creates test directories,
+// 2. Creates bare Git repositories with the specified commit history for each
+//    dependency in `deps`,
+// 3. Stores the commit hashes for each of the repositories created in the
+//    previous step, and
+// 4. Writes a new dependency file with the commits specified in
+//    `deps_commit_nums`.
+fn create_test_setup(
+    root_test_dir_name: &str,
+    deps: &HashMap<&str, Vec<HashMap<&str, &str>>>,
+    deps_commit_nums: &HashMap<&str, usize>,
+)
+    -> TestSetup
+{
+    let root_dir = create_root_test_dir(root_test_dir_name);
+    let dep_srcs_dir = create_test_dir(root_dir.clone(), "deps");
+    let scratch_dir = create_test_dir(root_dir.clone(), "scratch");
+    let proj_dir = create_test_dir(root_dir, "proj");
+
+    create_dep_srcs(&dep_srcs_dir, &scratch_dir, &deps);
+
+    let mut deps_commit_hashes = hashmap!{};
+    for dep_src_name in deps.keys() {
+        deps_commit_hashes.insert(
+            (*dep_src_name).to_string(),
+            get_repo_hashes(&format!("{}/{}.git", dep_srcs_dir, dep_src_name)),
+        );
+    }
+
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &deps_commit_nums,
+    );
 
     TestSetup{
-        root_dir,
+        dep_srcs_dir,
         proj_dir,
+        deps_commit_hashes,
         deps_file_conts,
     }
 }
 
 struct TestSetup {
-    root_dir: String,
+    dep_srcs_dir: String,
+    deps_commit_hashes: HashMap<String, Vec<String>>,
     proj_dir: String,
     deps_file_conts: String,
 }
@@ -105,6 +136,21 @@ fn create_test_dir(dir: String, name: &str) -> String {
         .expect("couldn't create directory");
 
     path
+}
+
+fn create_dep_srcs(
+    dep_srcs_dir: &str,
+    scratch_dir: &str,
+    deps: &HashMap<&str, Vec<HashMap<&str, &str>>>,
+) {
+    for (dep_src_name, commits) in deps {
+        let dep_src_dir_name = format!("{}.git", dep_src_name);
+        create_bare_git_repo(
+            &create_test_dir(dep_srcs_dir.to_owned(), &dep_src_dir_name),
+            &create_test_dir(scratch_dir.to_string(), dep_src_name),
+            &commits,
+        );
+    }
 }
 
 // `scratch_dir` is expected to be an empty directory that
@@ -173,6 +219,41 @@ fn get_repo_hashes(repo_dir: &str) -> Vec<String> {
         .collect()
 }
 
+fn write_test_deps_file(
+    proj_dir: &str,
+    deps_commit_hashes: &HashMap<String, Vec<String>>,
+    deps_commit_nums: &HashMap<&str, usize>,
+)
+    -> String
+{
+    let mut deps_file_conts = indoc::formatdoc!{
+        "
+            # This is the output directory.
+            target/deps
+
+            # These are the dependencies.
+        ",
+    };
+
+    for (dep_name, dep_commit_num) in deps_commit_nums {
+        deps_file_conts = indoc::formatdoc!(
+            "
+                {deps_file_conts}
+                {dep_name} git git://localhost/{dep_name}.git {dep_vsn}
+            ",
+            deps_file_conts = deps_file_conts,
+            dep_name = dep_name,
+            dep_vsn = deps_commit_hashes[*dep_name][*dep_commit_num],
+        )
+    }
+
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+
+    deps_file_conts
+}
+
 fn with_git_server<F, T>(dir: String, f: F) -> T
 where
     F: FnOnce() -> T,
@@ -215,6 +296,7 @@ fn new_test_cmd(root_test_dir: String) -> AssertCommand {
 
 enum Node<'a> {
     AnyDir,
+    AnyFile,
     Dir(HashMap<&'a str, Node<'a>>),
     File(&'a str),
 }
@@ -231,15 +313,28 @@ fn assert_fs_contents<'a>(path: &str, exp: &Node<'a>) {
 
             assert!(
                 exp_conts.as_bytes().to_vec() == act_conts,
-                format!("'{}' contained unexpected data", &path),
+                format!(
+                    "'{}' contained unexpected data, expected:\n{}",
+                    &path,
+                    exp_conts,
+                ),
             );
         }
         Node::AnyDir => {
-            fs::read_dir(&path)
+            let md = fs::metadata(&path)
                 .unwrap_or_else(|_| panic!(
-                    "couldn't open '{}' as a directory",
+                    "couldn't get metadata for '{}'",
                     path,
                 ));
+            assert!(md.is_dir());
+        }
+        Node::AnyFile => {
+            let md = fs::metadata(&path)
+                .unwrap_or_else(|_| panic!(
+                    "couldn't get metadata for '{}'",
+                    path,
+                ));
+            assert!(md.is_file());
         }
         Node::Dir(exp_entries) => {
             let act_entries =
@@ -302,10 +397,15 @@ fn assert_fs_contents<'a>(path: &str, exp: &Node<'a>) {
 // Then dependencies are pulled to the correct locations with the correct
 //     contents
 fn old_dep_vsn_pulled_correctly() {
-    let TestSetup{root_dir, proj_dir, deps_file_conts} =
-        create_test_setup("old_dep_vsn_pulled_correctly", 0);
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_file_conts, ..} =
+        create_test_setup(
+            "old_dep_vsn_pulled_correctly",
+            &test_deps,
+            &hashmap!{"my_scripts" => 0},
+        );
     let cmd_result = with_git_server(
-        root_dir,
+        dep_srcs_dir,
         || {
             let mut cmd = new_test_cmd(proj_dir.clone());
 
@@ -320,6 +420,7 @@ fn old_dep_vsn_pulled_correctly() {
             "dpnd.txt" => Node::File(&deps_file_conts),
             "target" => Node::Dir(hashmap!{
                 "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
                     "my_scripts" => Node::Dir(hashmap!{
                         ".git" => Node::AnyDir,
                         "script.sh" => Node::File("echo 'hello world'"),
@@ -337,13 +438,16 @@ fn old_dep_vsn_pulled_correctly() {
 // Then dependencies are pulled to the correct locations relative to the
 //     dependency file
 fn run_in_proj_subdir() {
-    let TestSetup{root_dir, proj_dir, deps_file_conts} =
-        create_test_setup("run_in_proj_subdir", 1);
-    let test_subdir = proj_dir.clone() + "/sub";
-    fs::create_dir(&test_subdir)
-        .expect("couldn't create directory");
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_file_conts, ..} =
+        create_test_setup(
+            "run_in_proj_subdir",
+            &test_deps,
+            &hashmap!{"my_scripts" => 1},
+        );
+    let test_subdir = create_test_dir(proj_dir.clone(), "sub");
     let cmd_result = with_git_server(
-        root_dir,
+        dep_srcs_dir,
         || {
             let mut cmd = new_test_cmd(test_subdir);
 
@@ -359,9 +463,555 @@ fn run_in_proj_subdir() {
             "sub" => Node::Dir(hashmap!{}),
             "target" => Node::Dir(hashmap!{
                 "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
                     "my_scripts" => Node::Dir(hashmap!{
                         ".git" => Node::AnyDir,
                         "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was run once and there have been no changes since
+// When the command is run
+// The dependencies don't change
+fn tool_is_idempotent() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_file_conts, ..} =
+        create_test_setup(
+            "tool_is_idempotent",
+            &test_deps,
+            &hashmap!{"my_scripts" => 1},
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.assert()
+                .code(0)
+                .stdout("")
+                .stderr("");
+
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with 0 dependencies in the depencency file and
+//     then a dependency was added
+// When the command is run
+// Then the new dependency is pulled to the correct location with the correct
+//     contents
+fn add_first_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool("add_first_dep", &test_deps, hashmap!{});
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{"my_scripts" => 1},
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+fn create_test_setup_and_run_tool(
+    root_test_dir_name: &str,
+    deps: &HashMap<&str, Vec<HashMap<&str, &str>>>,
+    deps_commit_nums: HashMap<&str, usize>,
+)
+    -> TestSetup
+{
+    let test_setup =
+        create_test_setup(root_test_dir_name, &deps, &deps_commit_nums);
+
+    run_tool(&test_setup, deps, deps_commit_nums);
+
+    test_setup
+}
+
+fn run_tool(
+    test_setup: &TestSetup,
+    deps: &HashMap<&str, Vec<HashMap<&str, &str>>>,
+    deps_commit_nums: HashMap<&str, usize>,
+) {
+    let TestSetup{dep_srcs_dir, proj_dir, deps_file_conts, ..} = test_setup;
+
+    with_git_server(
+        dep_srcs_dir.clone(),
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.assert()
+                .code(0)
+                .stdout("")
+                .stderr("");
+        },
+    );
+
+    let mut deps_output_dir = hashmap!{"current_dpnd.txt" => Node::AnyFile};
+    for (dep_name, dep_commit_num) in deps_commit_nums {
+        let mut dir_conts = hashmap!{".git" => Node::AnyDir};
+        for (fname, fconts) in &deps[dep_name][dep_commit_num] {
+            dir_conts.insert(fname, Node::File(fconts));
+        }
+        deps_output_dir.insert(dep_name, Node::Dir(dir_conts));
+    }
+
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(deps_output_dir),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with 1 dependency in the depencency file and
+//     then a dependency is added
+// When the command is run
+// Then the new dependency is pulled to the correct location with the correct
+//     contents
+fn add_second_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "add_second_dep",
+            &test_deps,
+            hashmap!{"my_scripts" => 1},
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{
+            "my_scripts" => 1,
+            "your_scripts" => 0,
+        },
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                    "your_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, sun!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with 2 dependencies in the depencency file and
+//     then a dependency is added
+// When the command is run
+// Then the new dependency is pulled to the correct location with the correct
+//     contents
+fn add_third_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "add_third_dep",
+            &test_deps,
+            hashmap!{
+                "my_scripts" => 1,
+                "your_scripts" => 0,
+            },
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{
+            "my_scripts" => 1,
+            "your_scripts" => 0,
+            "their_scripts" => 0,
+        },
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                    "your_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, sun!'"),
+                    }),
+                    "their_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, moon!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with 3 dependencies in the depencency file and
+//     then a dependency is removed
+// When the command is run
+// Then the directory of the removed dependency is removed
+fn rm_third_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "rm_third_dep",
+            &test_deps,
+            hashmap!{
+                "my_scripts" => 1,
+                "your_scripts" => 0,
+                "their_scripts" => 0,
+            },
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{
+            "my_scripts" => 1,
+            "your_scripts" => 0,
+        },
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                    "your_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, sun!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with 2 dependencies in the depencency file and
+//     then a dependency is removed
+// When the command is run
+// Then the directory of the removed dependency is removed
+fn rm_second_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "rm_second_dep",
+            &test_deps,
+            hashmap!{
+                "my_scripts" => 1,
+                "your_scripts" => 0,
+            },
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{"my_scripts" => 1},
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with 1 dependency in the depencency file and
+//     then a dependency is removed
+// When the command is run
+// Then the directory of the removed dependency is removed
+fn rm_first_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "rm_first_dep",
+            &test_deps,
+            hashmap!{"my_scripts" => 1},
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{},
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was run with 1 dependency in the depencency file and
+//     then a dependency is removed and then the tool was run and then a
+//     dependency was added
+// When the command is run
+// Then dependencies are pulled to the correct locations with the correct
+//     contents
+fn add_after_rm() {
+    let test_deps = test_deps();
+    let test_setup =
+        create_test_setup_and_run_tool(
+            "add_after_rm",
+            &test_deps,
+            hashmap!{"my_scripts" => 1},
+        );
+    let deps_file_conts = write_test_deps_file(
+        &test_setup.proj_dir,
+        &test_setup.deps_commit_hashes,
+        &hashmap!{},
+    );
+    let test_setup = TestSetup{deps_file_conts, ..test_setup};
+    run_tool(&test_setup, &test_deps, hashmap!{});
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} = test_setup;
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{"my_scripts" => 1},
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with an old version of a dependency in the
+//     depencency file and then the dependency was upgraded
+// When the command is run
+// Then the newer version of the dependency is pulled to the correct location
+//     with the correct contents
+fn upgrade_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "downgrade_dep",
+            &test_deps,
+            hashmap!{"my_scripts" => 0},
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{"my_scripts" => 1},
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello, world!'"),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the tool was just run with a new version of a dependency in the
+//     depencency file and then the dependency was downgraded
+// When the command is run
+// Then the older version of the dependency is pulled to the correct location
+//     with the correct contents
+fn downgrade_dep() {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup_and_run_tool(
+            "upgrade_dep",
+            &test_deps,
+            hashmap!{"my_scripts" => 1},
+        );
+    let deps_file_conts = write_test_deps_file(
+        &proj_dir,
+        &deps_commit_hashes,
+        &hashmap!{"my_scripts" => 0},
+    );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "target" => Node::Dir(hashmap!{
+                "deps" => Node::Dir(hashmap!{
+                    "current_dpnd.txt" => Node::AnyFile,
+                    "my_scripts" => Node::Dir(hashmap!{
+                        ".git" => Node::AnyDir,
+                        "script.sh" => Node::File("echo 'hello world'"),
                     }),
                 }),
             }),
@@ -541,13 +1191,16 @@ fn unavailable_git_proj_vsn() {
 
         my_scripts git git://localhost/my_scripts.git bad_commit
     "};
-    let cmd_result = with_git_server(root_test_dir, || {
-        fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
-            .expect("couldn't write dependency file");
-        let mut cmd = new_test_cmd(test_proj_dir.clone());
+    let cmd_result = with_git_server(
+        root_test_dir,
+        || {
+            fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
+                .expect("couldn't write dependency file");
+            let mut cmd = new_test_cmd(test_proj_dir.clone());
 
-        cmd.assert()
-    });
+            cmd.assert()
+        },
+    );
 
     cmd_result
         .code(1)
@@ -611,8 +1264,8 @@ fn dep_output_dir_is_file() {
         .code(1)
         .stdout("")
         .stderr(format!(
-            "Couldn't create '{}/deps/my_scripts', the output directory for \
-             the 'my_scripts' dependency: File exists (os error 17)\n",
+            "Couldn't remove '{}/deps/my_scripts', the output directory for \
+             the 'my_scripts' dependency: Not a directory (os error 20)\n",
             test_proj_dir,
         ));
 }
