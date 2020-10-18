@@ -49,6 +49,32 @@ of the named projects under `target/deps`, so the first project will be
 accessible under `target/deps/deploy`, the second under `target/deps/example`,
 and so on.
 
+Development
+-----------
+
+### Build environment
+
+The build environment for the project is defined in `scripts/build.Dockerfile`.
+The build environment can be replicated locally by following the setup defined
+in the Dockerfile, or Docker can be used to mount the local directory in the
+build environment by running the following:
+
+    $ bash scripts/with_build_env.sh bash
+
+### Building
+
+The project can be built locally using `cargo build`, or can be built using
+Docker by running the following:
+
+    $ bash scripts/with_build_env.sh cargo build
+
+### Testing
+
+The project can be tested locally using `make check`, or can be built using
+Docker by running the following:
+
+    $ bash scripts/with_build_env.sh make check
+
 FAQs
 ----
 
