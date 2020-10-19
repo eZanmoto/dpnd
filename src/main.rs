@@ -19,9 +19,8 @@ mod dep_tools;
 #[macro_use] mod wrap_err;
 
 use dep_tools::DepTool;
-use dep_tools::DepToolFactory;
 use dep_tools::FetchError;
-use dep_tools::GitFactory;
+use dep_tools::Git;
 
 extern crate regex;
 
@@ -65,16 +64,15 @@ fn install(
         InstallError::ConvDepsFileUtf8Failed,
     );
 
-    let mut tool_factories: HashMap<String, &dyn DepToolFactory<String>> =
-        HashMap::new();
-    tool_factories.insert("git".to_string(), &GitFactory {});
+    let mut tools: HashMap<String, &dyn DepTool<String>> = HashMap::new();
+    tools.insert("git".to_string(), &Git{});
 
     let conf = wrap_err!(
         parse_deps_conf(
             &deps_spec,
             state_file_name,
             bad_dep_name_chars,
-            &tool_factories,
+            &tools,
         ),
         InstallError::ParseDepsConfFailed,
     );
@@ -100,7 +98,7 @@ fn install(
                 &mut state_spec.lines().enumerate(),
                 state_file_name,
                 bad_dep_name_chars,
-                &tool_factories,
+                &tools,
             ),
             InstallError::ParseStateFileFailed,
             state_file_path,
@@ -155,7 +153,7 @@ fn parse_deps_conf<'a>(
     conts: &str,
     state_file_name: &str,
     bad_dep_name_chars: &Regex,
-    tool_factories: &HashMap<String, &'a (dyn DepToolFactory<String> + 'a)>,
+    tools: &HashMap<String, &'a (dyn DepTool<String> + 'a)>,
 )
     -> Result<DepsConf<'a, String>, ParseDepsConfError>
 {
@@ -169,7 +167,7 @@ fn parse_deps_conf<'a>(
                     &mut lines,
                     state_file_name,
                     bad_dep_name_chars,
-                    &tool_factories,
+                    &tools,
                 ),
                 ParseDepsConfError::ParseDepsFailed,
             ),
@@ -213,7 +211,7 @@ fn parse_deps<'a>(
     lines: &mut Enumerate<Lines>,
     state_file_name: &str,
     bad_dep_name_chars: &Regex,
-    tool_factories: &HashMap<String, &'a (dyn DepToolFactory<String> + 'a)>,
+    tools: &HashMap<String, &'a (dyn DepTool<String> + 'a)>,
 )
     -> Result<HashMap<String, Dependency<'a, String>>, ParseDepsError>
 {
@@ -260,8 +258,8 @@ fn parse_deps<'a>(
         }
 
         let tool_name = words[1].to_string();
-        let tool = match tool_factories.get(&tool_name) {
-            Some(tool_factory) => tool_factory.create(),
+        let tool = match tools.get(&tool_name) {
+            Some(tool) => *tool,
             None => return Err(ParseDepsError::UnknownTool(
                 ln_num,
                 local_name,

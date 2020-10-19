@@ -7,10 +7,6 @@ use std::process::Command;
 use std::process::Output;
 use std::str;
 
-pub trait DepToolFactory<E> {
-    fn create(&self) -> &dyn DepTool<E>;
-}
-
 pub trait DepTool<E> {
     // `name` returns an identifying name that should be unique across all
     // dependency tools.
@@ -28,15 +24,6 @@ pub trait DepTool<E> {
 pub enum FetchError<E> {
     RetrieveFailed(E),
     VersionChangeFailed(E),
-}
-
-#[derive(Debug)]
-pub struct GitFactory {}
-
-impl DepToolFactory<String> for GitFactory {
-    fn create(&self) -> &dyn DepTool<String> {
-        &Git {}
-    }
 }
 
 #[derive(Debug)]
