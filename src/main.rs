@@ -30,7 +30,7 @@ use regex::Regex;
 fn main() {
     let deps_file_name = "dpnd.txt";
     let state_file_name = format!("current_{}", deps_file_name);
-    let bad_dep_name_chars = Regex::new(r"[^a-zA-Z._-]").unwrap();
+    let bad_dep_name_chars = Regex::new(r"[^a-zA-Z0-9._-]").unwrap();
 
     let install_result = install(
         &deps_file_name,
