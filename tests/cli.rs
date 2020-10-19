@@ -58,7 +58,9 @@ fn new_dep_vsn_pulled_correctly() {
     );
 }
 
-fn test_deps() -> HashMap<&'static str, Vec<HashMap<&'static str, &'static str>>> {
+fn test_deps()
+    -> HashMap<&'static str, Vec<HashMap<&'static str, &'static str>>>
+{
     hashmap!{
         "my_scripts" => vec![
             hashmap!{"script.sh" => "echo 'hello world'"},
@@ -527,7 +529,11 @@ fn tool_is_idempotent() {
 fn add_first_dep() {
     let test_deps = test_deps();
     let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
-        create_test_setup_and_run_tool("add_first_dep", &test_deps, hashmap!{});
+        create_test_setup_and_run_tool(
+            "add_first_dep",
+            &test_deps,
+            hashmap!{},
+        );
     let deps_file_conts = write_test_deps_file(
         &proj_dir,
         &deps_commit_hashes,
