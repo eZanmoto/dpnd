@@ -24,11 +24,13 @@ pub trait DepTool<E> {
     ) -> Result<(), FetchError<E>>;
 }
 
+#[derive(Debug)]
 pub enum FetchError<E> {
     RetrieveFailed(E),
     VersionChangeFailed(E),
 }
 
+#[derive(Debug)]
 pub struct GitFactory {}
 
 impl DepToolFactory<String> for GitFactory {
@@ -37,6 +39,7 @@ impl DepToolFactory<String> for GitFactory {
     }
 }
 
+#[derive(Debug)]
 pub struct Git {}
 
 impl DepTool<String> for Git {

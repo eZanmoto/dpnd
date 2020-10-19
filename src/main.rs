@@ -121,6 +121,7 @@ fn install(
     Ok(())
 }
 
+#[derive(Debug)]
 enum InstallError<E> {
     GetCurrentDirFailed(IoError),
     NoDepsFileFound,
@@ -178,6 +179,7 @@ fn parse_deps_conf<'a>(
     }
 }
 
+#[derive(Debug)]
 enum ParseDepsConfError {
     MissingOutputDir,
     ParseDepsFailed(ParseDepsError),
@@ -294,6 +296,7 @@ struct Dependency<'a, E> {
     version: String,
 }
 
+#[derive(Debug)]
 enum ParseDepsError {
     DupDepName(usize, String, usize),
     DepNameContainsInvalidChar(usize, String, usize),
@@ -382,6 +385,7 @@ fn install_deps<'a>(
 }
 
 #[allow(clippy::enum_variant_names)]
+#[derive(Debug)]
 enum InstallDepsError<E> {
     RemoveOldDepOutputDirFailed(IoError, String, PathBuf),
     WriteCurDepsAfterRemoveFailed(WriteStateFileError, String, PathBuf),
@@ -422,7 +426,7 @@ fn actions<'a>(
     actions
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Action {
     Install,
     Remove,
@@ -459,6 +463,7 @@ fn write_state_file<'a>(
     Ok(())
 }
 
+#[derive(Debug)]
 enum WriteStateFileError {
     OpenFailed(IoError),
     WriteDepLineFailed(IoError),

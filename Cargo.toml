@@ -11,7 +11,7 @@ license = "MIT"
 name = "dpnd"
 readme = "README.md"
 repository = "https://github.com/ezanmoto/dpnd"
-version = "0.1.4"
+version = "0.1.5"
 
 # See <https://crates.io/crates/regex> for more information on this section. The
 # most notable reasoning is as follows:
