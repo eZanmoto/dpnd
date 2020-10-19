@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::panic;
+use std::panic::UnwindSafe;
 use std::process::Command;
 use std::string::ToString;
 
@@ -258,7 +259,7 @@ fn write_test_deps_file(
 
 fn with_git_server<F, T>(dir: String, f: F) -> T
 where
-    F: FnOnce() -> T,
+    F: FnOnce() -> T + UnwindSafe,
 {
     let git_exec_path = run_cmd(&dir, "git", &["--exec-path"]);
 
@@ -276,7 +277,7 @@ where
         .spawn()
         .expect("couldn't spawn Git server");
 
-    let v = f();
+    let result = panic::catch_unwind(f);
 
     daemon.kill()
         .expect("couldn't kill Git server");
@@ -284,7 +285,10 @@ where
     daemon.wait()
         .expect("couldn't wait for Git server");
 
-    v
+    match result {
+        Ok(v) => v,
+        Err(err) => panic::resume_unwind(err),
+    }
 }
 
 fn new_test_cmd(root_test_dir: String) -> AssertCommand {
