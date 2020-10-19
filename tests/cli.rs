@@ -1299,8 +1299,9 @@ fn main_output_dir_is_file() {
         .code(1)
         .stdout("")
         .stderr(format!(
-            "Couldn't create '{}/target/deps', the main output directory: Not \
-             a directory (os error 20)\n",
+            "Couldn't read the state file \
+             ('{}/target/deps/current_dpnd.txt'): Not a directory (os error \
+             20)\n",
             test_proj_dir,
         ));
 }

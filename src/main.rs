@@ -80,10 +80,20 @@ fn install(
     let output_dir = deps_dir.join(conf.output_dir);
     let state_file_path = output_dir.join(state_file_name);
     let state_file_conts = match fs::read(&state_file_path) {
-        Ok(conts) => conts,
-        // TODO Only ignore the underlying error if it's that the file doesn't
-        // exist.
-        Err(_) => vec![],
+        Ok(conts) => {
+            conts
+        },
+        Err(err) => {
+            if err.kind() == ErrorKind::NotFound {
+                vec![]
+            } else {
+                wrap_err!(
+                    Err(err),
+                    InstallError::ReadStateFileFailed,
+                    state_file_path,
+                )
+            }
+        },
     };
 
     let state_spec = wrap_err!(
@@ -125,6 +135,7 @@ enum InstallError<E> {
     NoDepsFileFound,
     ConvDepsFileUtf8Failed(FromUtf8Error),
     ParseDepsConfFailed(ParseDepsConfError),
+    ReadStateFileFailed(IoError, PathBuf),
     ConvStateFileUtf8Failed(FromUtf8Error, PathBuf),
     ParseStateFileFailed(ParseDepsError, PathBuf),
     CreateMainOutputDirFailed(IoError, PathBuf),
@@ -485,6 +496,12 @@ fn print_install_error(err: InstallError<String>, deps_file_name: &str) {
             ),
         InstallError::ParseDepsConfFailed(err) =>
             print_parse_deps_conf_error(err),
+        InstallError::ReadStateFileFailed(io_err, state_file_path) =>
+            eprintln!(
+                "Couldn't read the state file ('{}'): {}",
+                render_path(&state_file_path),
+                io_err,
+            ),
         InstallError::ConvStateFileUtf8Failed(err, state_file_path) =>
             eprintln!(
                 "The state file ('{}') contains an invalid UTF-8 sequence \
@@ -514,7 +531,7 @@ fn print_install_deps_error(err: InstallDepsError<String>) {
     match err {
         InstallDepsError::RemoveOldDepOutputDirFailed(io_err, dep, path) =>
             eprintln!(
-                "Couldn't remove {}, the output directory for the '{}' \
+                "Couldn't remove '{}', the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
                 dep,
@@ -674,7 +691,7 @@ fn print_write_cur_deps_err(
 
 fn render_path(path: &PathBuf) -> String {
     if let Some(s) = path.to_str() {
-        format!("'{}'", s)
+        s.to_string()
     } else {
         format!("{:?}", path)
     }
