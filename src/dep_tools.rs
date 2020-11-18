@@ -2,6 +2,11 @@
 // Use of this source code is governed by an MIT
 // licence that can be found in the LICENCE file.
 
+use std::error::Error;
+use std::fmt::Debug;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::fmt::Result as FmtResult;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
@@ -26,16 +31,36 @@ pub enum FetchError<E> {
     VersionChangeFailed(E),
 }
 
+impl<E> Display for FetchError<E>
+where
+    E: Display
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let (act, err) = match self {
+            FetchError::RetrieveFailed(err) =>
+                ("retrieve dependency", err),
+            FetchError::VersionChangeFailed(err) =>
+                ("change the dependency version", err),
+        };
+        write!(f, "couldn't {}: {}", act, err)
+    }
+}
+
+impl<E> Error for FetchError<E>
+where
+    E: Display + Debug
+{}
+
 #[derive(Debug)]
 pub struct Git {}
 
-impl DepTool<String> for Git {
+impl DepTool<GitCmdError> for Git {
     fn name(&self) -> String {
         "git".to_string()
     }
 
     fn fetch(&self, src: String, vsn: String, out_dir: &PathBuf)
-        -> Result<(), FetchError<String>>
+        -> Result<(), FetchError<GitCmdError>>
     {
         let gits_args = vec![
             vec!["clone", &src, "."],
@@ -52,30 +77,43 @@ impl DepTool<String> for Git {
             let output = match maybe_output {
                 Ok(output) => output,
                 Err(err) => {
-                    let msg = format!(
+                    let err = GitCmdError{msg: format!(
                         "couldn't start `git {}`: {}",
                         git_args.join(" "),
                         err,
-                    );
+                    )};
                     if i == 0 {
-                        return Err(FetchError::RetrieveFailed(msg));
+                        return Err(FetchError::RetrieveFailed(err));
                     } else {
-                        return Err(FetchError::VersionChangeFailed(msg));
+                        return Err(FetchError::VersionChangeFailed(err));
                     }
                 }
             };
 
             if !output.status.success() {
-                let msg = render_git_failure(&git_args.join(" "), &output);
+                let err = GitCmdError{
+                    msg: render_git_failure(&git_args.join(" "), &output),
+                };
                 if i == 0 {
-                    return Err(FetchError::RetrieveFailed(msg));
+                    return Err(FetchError::RetrieveFailed(err));
                 } else {
-                    return Err(FetchError::VersionChangeFailed(msg));
+                    return Err(FetchError::VersionChangeFailed(err));
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct GitCmdError {
+    msg: String,
+}
+
+impl Display for GitCmdError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.msg)
     }
 }
 
