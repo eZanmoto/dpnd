@@ -2,12 +2,20 @@
 // Use of this source code is governed by an MIT
 // licence that can be found in the LICENCE file.
 
+use std::error::Error;
+use std::io::Error as IoError;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
-use std::str;
 
-pub trait DepTool<E> {
+extern crate snafu;
+
+use snafu::Snafu;
+
+pub trait DepTool<E>
+where
+    E: Error + 'static,
+{
     // `name` returns an identifying name that should be unique across all
     // dependency tools.
     fn name(&self) -> String;
@@ -20,57 +28,62 @@ pub trait DepTool<E> {
     ) -> Result<(), FetchError<E>>;
 }
 
-#[derive(Debug)]
-pub enum FetchError<E> {
-    RetrieveFailed(E),
-    VersionChangeFailed(E),
+#[derive(Debug, Snafu)]
+pub enum FetchError<E>
+where
+    E: Error + 'static,
+{
+    RetrieveFailed{source: E},
+    VersionChangeFailed{source: E},
 }
 
 #[derive(Debug)]
 pub struct Git {}
 
-impl DepTool<String> for Git {
+impl DepTool<GitCmdError> for Git {
     fn name(&self) -> String {
         "git".to_string()
     }
 
     fn fetch(&self, src: String, vsn: String, out_dir: &PathBuf)
-        -> Result<(), FetchError<String>>
+        -> Result<(), FetchError<GitCmdError>>
     {
         let gits_args = vec![
             vec!["clone", &src, "."],
             vec!["checkout", &vsn],
         ];
 
-        for (i, git_args) in gits_args.iter().enumerate() {
+        for (i, git_args) in gits_args.into_iter().enumerate() {
             let maybe_output =
                 Command::new("git")
-                    .args(git_args)
+                    .args(&git_args)
                     .current_dir(out_dir)
                     .output();
 
             let output = match maybe_output {
                 Ok(output) => output,
                 Err(err) => {
-                    let msg = format!(
-                        "couldn't start `git {}`: {}",
-                        git_args.join(" "),
-                        err,
-                    );
+                    let source = GitCmdError::StartFailed{
+                        source: err,
+                        args: owned_strs_to_strings(git_args),
+                    };
                     if i == 0 {
-                        return Err(FetchError::RetrieveFailed(msg));
+                        return Err(FetchError::RetrieveFailed{source});
                     } else {
-                        return Err(FetchError::VersionChangeFailed(msg));
+                        return Err(FetchError::VersionChangeFailed{source});
                     }
                 }
             };
 
             if !output.status.success() {
-                let msg = render_git_failure(&git_args.join(" "), &output);
+                let source = GitCmdError::NotSuccess{
+                    args: owned_strs_to_strings(git_args),
+                    output,
+                };
                 if i == 0 {
-                    return Err(FetchError::RetrieveFailed(msg));
+                    return Err(FetchError::RetrieveFailed{source});
                 } else {
-                    return Err(FetchError::VersionChangeFailed(msg));
+                    return Err(FetchError::VersionChangeFailed{source});
                 }
             }
         }
@@ -79,40 +92,14 @@ impl DepTool<String> for Git {
     }
 }
 
-fn render_git_failure(args: &str, output: &Output) -> String {
-    let render_output = |bytes, name, prefix| {
-        if let Ok(s) = str::from_utf8(bytes) {
-            prefix_lines(s, prefix)
-        } else {
-            format!("{} (not UTF-8): {:?}", name, bytes)
-        }
-    };
-
-    format!(
-        "`git {}` failed with the following output:\n\n{}{}",
-        args,
-        render_output(&output.stdout, "STDOUT", "[>] "),
-        render_output(&output.stderr, "STDERR", "[!] "),
-    )
+#[derive(Debug, Snafu)]
+pub enum GitCmdError {
+    StartFailed{source: IoError, args: Vec<String>},
+    NotSuccess{args: Vec<String>, output: Output},
 }
 
-fn prefix_lines(src: &str, pre: &str) -> String {
-    if src.is_empty() {
-        return "".to_string();
-    }
-
-    let tgt = format!(
-        "{}{}",
-        pre,
-        &src.replace("\n", &format!("\n{}", pre)),
-    );
-
-    if src.ends_with('\n') {
-        match tgt.strip_suffix(pre) {
-            Some(s) => s.to_string(),
-            None => tgt,
-        }
-    } else {
-        tgt
-    }
+fn owned_strs_to_strings(strs: Vec<&str>) -> Vec<String> {
+    strs.into_iter()
+        .map(String::from)
+        .collect()
 }

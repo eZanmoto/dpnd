@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::error::Error;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Error as IoError;
@@ -12,19 +13,23 @@ use std::io::Write;
 use std::iter::Enumerate;
 use std::path::PathBuf;
 use std::process;
+use std::str;
 use std::str::Lines;
 use std::string::FromUtf8Error;
 
 mod dep_tools;
-#[macro_use] mod wrap_err;
 
 use dep_tools::DepTool;
 use dep_tools::FetchError;
 use dep_tools::Git;
+use dep_tools::GitCmdError;
 
 extern crate regex;
+extern crate snafu;
 
 use regex::Regex;
+use snafu::ResultExt;
+use snafu::Snafu;
 
 fn main() {
     let deps_file_name = "dpnd.txt";
@@ -47,35 +52,29 @@ fn install(
     state_file_name: &str,
     bad_dep_name_chars: &Regex,
 )
-    -> Result<(), InstallError<String>>
+    -> Result<(), InstallError<GitCmdError>>
 {
-    let cwd = wrap_err!(
-        env::current_dir(),
-        InstallError::GetCurrentDirFailed,
-    );
+    let cwd = env::current_dir()
+        .context(GetCurrentDirFailed{})?;
 
     let (deps_dir, deps_spec) = match read_deps_file(cwd, &deps_file_name) {
         Some(v) => v,
         None => return Err(InstallError::NoDepsFileFound),
     };
 
-    let deps_spec = wrap_err!(
-        String::from_utf8(deps_spec),
-        InstallError::ConvDepsFileUtf8Failed,
-    );
+    let deps_spec = String::from_utf8(deps_spec)
+        .context(ConvDepsFileUtf8Failed{})?;
 
-    let mut tools: HashMap<String, &dyn DepTool<String>> = HashMap::new();
+    let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> = HashMap::new();
     tools.insert("git".to_string(), &Git{});
 
-    let conf = wrap_err!(
-        parse_deps_conf(
-            &deps_spec,
-            state_file_name,
-            bad_dep_name_chars,
-            &tools,
-        ),
-        InstallError::ParseDepsConfFailed,
-    );
+    let conf = parse_deps_conf(
+        &deps_spec,
+        state_file_name,
+        bad_dep_name_chars,
+        &tools,
+    )
+        .context(ParseDepsConfFailed{})?;
 
     let output_dir = deps_dir.join(conf.output_dir);
     let state_file_path = output_dir.join(state_file_name);
@@ -87,59 +86,51 @@ fn install(
             if err.kind() == ErrorKind::NotFound {
                 vec![]
             } else {
-                wrap_err!(
-                    Err(err),
-                    InstallError::ReadStateFileFailed,
-                    state_file_path,
-                )
+                return Err(InstallError::ReadStateFileFailed{
+                    source: err,
+                    path: state_file_path,
+                });
             }
         },
     };
 
-    let state_spec = wrap_err!(
-        String::from_utf8(state_file_conts),
-        InstallError::ConvStateFileUtf8Failed,
-        state_file_path,
-    );
+    let state_spec = String::from_utf8(state_file_conts)
+        .with_context(
+            || ConvStateFileUtf8Failed{path: state_file_path.clone()}
+        )?;
 
-    let cur_deps =
-        wrap_err!(
-            parse_deps(
-                &mut state_spec.lines().enumerate(),
-                state_file_name,
-                bad_dep_name_chars,
-                &tools,
-            ),
-            InstallError::ParseStateFileFailed,
-            state_file_path,
-        );
+    let cur_deps = parse_deps(
+        &mut state_spec.lines().enumerate(),
+        state_file_name,
+        bad_dep_name_chars,
+        &tools,
+    )
+        .with_context(|| ParseStateFileFailed{path: state_file_path.clone()})?;
 
-    wrap_err!(
-        fs::create_dir_all(&output_dir),
-        InstallError::CreateMainOutputDirFailed,
-        output_dir,
-    );
+    fs::create_dir_all(&output_dir)
+        .with_context(|| CreateMainOutputDirFailed{path: output_dir.clone()})?;
 
     let state_file_path = output_dir.join(state_file_name);
-    wrap_err!(
-        install_deps(&output_dir, state_file_path, cur_deps, conf.deps),
-        InstallError::InstallDepsError,
-    );
+    install_deps(&output_dir, state_file_path, cur_deps, conf.deps)
+        .context(InstallDepsFailed{})?;
 
     Ok(())
 }
 
-#[derive(Debug)]
-enum InstallError<E> {
-    GetCurrentDirFailed(IoError),
+#[derive(Debug, Snafu)]
+enum InstallError<E>
+where
+    E: Error + 'static
+{
+    GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
-    ConvDepsFileUtf8Failed(FromUtf8Error),
-    ParseDepsConfFailed(ParseDepsConfError),
-    ReadStateFileFailed(IoError, PathBuf),
-    ConvStateFileUtf8Failed(FromUtf8Error, PathBuf),
-    ParseStateFileFailed(ParseDepsError, PathBuf),
-    CreateMainOutputDirFailed(IoError, PathBuf),
-    InstallDepsError(InstallDepsError<E>),
+    ConvDepsFileUtf8Failed{source: FromUtf8Error},
+    ParseDepsConfFailed{source: ParseDepsConfError},
+    ReadStateFileFailed{source: IoError, path: PathBuf},
+    ConvStateFileUtf8Failed{source: FromUtf8Error, path: PathBuf},
+    ParseStateFileFailed{source: ParseDepsError, path: PathBuf},
+    CreateMainOutputDirFailed{source: IoError, path: PathBuf},
+    InstallDepsFailed{source: InstallDepsError<E>},
 }
 
 // `read_deps_file` reads the file named `deps_file_name` in `start` or the
@@ -164,34 +155,32 @@ fn parse_deps_conf<'a>(
     conts: &str,
     state_file_name: &str,
     bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<String> + 'a)>,
+    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
 )
-    -> Result<DepsConf<'a, String>, ParseDepsConfError>
+    -> Result<DepsConf<'a, GitCmdError>, ParseDepsConfError>
 {
     let mut lines = conts.lines().enumerate();
 
     if let Some(output_dir) = parse_output_dir(&mut lines) {
         Ok(DepsConf {
             output_dir,
-            deps: wrap_err!(
-                parse_deps(
-                    &mut lines,
-                    state_file_name,
-                    bad_dep_name_chars,
-                    &tools,
-                ),
-                ParseDepsConfError::ParseDepsFailed,
-            ),
+            deps: parse_deps(
+                &mut lines,
+                state_file_name,
+                bad_dep_name_chars,
+                &tools,
+            )
+                .context(ParseDepsFailed{})?,
         })
     } else {
         Err(ParseDepsConfError::MissingOutputDir)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 enum ParseDepsConfError {
     MissingOutputDir,
-    ParseDepsFailed(ParseDepsError),
+    ParseDepsFailed{source: ParseDepsError},
 }
 
 struct DepsConf<'a, E> {
@@ -222,11 +211,12 @@ fn parse_deps<'a>(
     lines: &mut Enumerate<Lines>,
     state_file_name: &str,
     bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<String> + 'a)>,
+    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
 )
-    -> Result<HashMap<String, Dependency<'a, String>>, ParseDepsError>
+    -> Result<HashMap<String, Dependency<'a, GitCmdError>>, ParseDepsError>
 {
-    let mut dep_defns: Vec<(String, Dependency<'a, String>, usize)> = vec![];
+    let mut dep_defns: Vec<(String, Dependency<'a, GitCmdError>, usize)> =
+        vec![];
 
     for (i, line) in lines {
         let ln_num = i + 1;
@@ -238,49 +228,49 @@ fn parse_deps<'a>(
 
         let words: Vec<&str> = ln.split_ascii_whitespace().collect();
         if words.len() != 4 {
-            return Err(ParseDepsError::InvalidDepSpec(
+            return Err(ParseDepsError::InvalidDepSpec{
                 ln_num,
-                ln.to_string(),
-            ));
+                line: ln.to_string(),
+            });
         }
 
         let local_name = words[0].to_string();
         if let Some(found) = bad_dep_name_chars.find(&local_name) {
-            return Err(ParseDepsError::DepNameContainsInvalidChar(
+            return Err(ParseDepsError::DepNameContainsInvalidChar{
                 ln_num,
-                local_name.clone(),
-                found.start(),
-            ));
+                dep_name: local_name.clone(),
+                bad_char_idx: found.start(),
+            });
         } else if local_name == state_file_name {
-            return Err(ParseDepsError::ReservedDepName(
+            return Err(ParseDepsError::ReservedDepName{
                 ln_num,
-                local_name.clone(),
-            ));
+                dep_name: local_name.clone(),
+            });
         }
 
         for (dep_local_name, _dep, defn_ln_num) in &dep_defns {
             if *dep_local_name == local_name {
-                return Err(ParseDepsError::DupDepName(
+                return Err(ParseDepsError::DupDepName{
                     ln_num,
-                    local_name,
-                    *defn_ln_num,
-                ));
+                    dep_name: local_name,
+                    orig_ln_num: *defn_ln_num,
+                });
             }
         }
 
         let tool_name = words[1].to_string();
         let tool = match tools.get(&tool_name) {
             Some(tool) => *tool,
-            None => return Err(ParseDepsError::UnknownTool(
+            None => return Err(ParseDepsError::UnknownTool{
                 ln_num,
-                local_name,
+                dep_name: local_name,
                 tool_name,
-            )),
+            }),
         };
 
         dep_defns.push((
             local_name,
-            Dependency {
+            Dependency{
                 tool,
                 source: words[2].to_string(),
                 version: words[3].to_string(),
@@ -305,110 +295,122 @@ struct Dependency<'a, E> {
     version: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 enum ParseDepsError {
-    DupDepName(usize, String, usize),
-    DepNameContainsInvalidChar(usize, String, usize),
-    ReservedDepName(usize, String),
-    InvalidDepSpec(usize, String),
-    UnknownTool(usize, String, String),
+    DupDepName{ln_num: usize, dep_name: String, orig_ln_num: usize},
+    DepNameContainsInvalidChar{
+        ln_num: usize,
+        dep_name: String,
+        bad_char_idx: usize,
+    },
+    ReservedDepName{ln_num: usize, dep_name: String},
+    InvalidDepSpec{ln_num: usize, line: String},
+    UnknownTool{ln_num: usize, dep_name: String, tool_name: String},
 }
 
 fn install_deps<'a>(
     output_dir: &PathBuf,
     state_file_path: PathBuf,
-    mut cur_deps: HashMap<String, Dependency<'a, String>>,
-    mut new_deps: HashMap<String, Dependency<'a, String>>,
+    mut cur_deps: HashMap<String, Dependency<'a, GitCmdError>>,
+    mut new_deps: HashMap<String, Dependency<'a, GitCmdError>>,
 )
-    -> Result<(), InstallDepsError<String>>
+    -> Result<(), InstallDepsError<GitCmdError>>
 {
     let mut actions = actions(&cur_deps, &new_deps);
 
     while let Some((act, dep_name)) = actions.pop() {
         let dir = output_dir.join(&dep_name);
-        if let Err(err) = fs::remove_dir_all(&dir) {
-            if err.kind() != ErrorKind::NotFound {
-                return Err(InstallDepsError::RemoveOldDepOutputDirFailed(
-                    err,
+        if let Err(source) = fs::remove_dir_all(&dir) {
+            if source.kind() != ErrorKind::NotFound {
+                return Err(InstallDepsError::RemoveOldDepOutputDirFailed{
+                    source,
                     dep_name,
-                    dir,
-                ));
+                    path: dir,
+                });
             }
         }
         cur_deps.remove(&dep_name);
 
-        wrap_err!(
-            write_state_file(&state_file_path, &cur_deps),
-            InstallDepsError::WriteCurDepsAfterRemoveFailed,
-            dep_name,
-            state_file_path,
-        );
+        write_state_file(&state_file_path, &cur_deps)
+            .with_context(|| WriteCurDepsAfterRemoveFailed{
+                dep_name: dep_name.clone(),
+                state_file_path: state_file_path.clone(),
+            })?;
 
         if act != Action::Install {
             continue;
         }
 
-        let new_dep =
-            new_deps.remove(&dep_name)
-                .unwrap_or_else(|| panic!(
-                    "dependency '{}' wasn't in the map of current \
-                     dependencies",
-                    dep_name,
-                ));
+        let new_dep = new_deps.remove(&dep_name)
+            .unwrap_or_else(|| panic!(
+                "dependency '{}' wasn't in the map of current \
+                 dependencies",
+                dep_name,
+            ));
 
         let dir = output_dir.join(&dep_name);
-        wrap_err!(
-            fs::create_dir(&dir),
-            InstallDepsError::CreateDepOutputDirFailed,
-            dep_name.clone(),
-            dir,
-        );
+        fs::create_dir(&dir)
+            .context(CreateDepOutputDirFailed{
+                dep_name: dep_name.clone(),
+                path: &dir,
+            })?;
 
-        wrap_err!(
-            new_dep.tool.fetch(
-                (&new_dep.source).to_string(),
-                (&new_dep.version).to_string(),
-                &dir,
-            ),
-            InstallDepsError::FetchFailed,
-            dep_name.clone(),
-        );
+        new_dep.tool.fetch(
+            (&new_dep.source).to_string(),
+            (&new_dep.version).to_string(),
+            &dir,
+        )
+            .context(FetchFailed{dep_name: dep_name.clone()})?;
         cur_deps.insert(dep_name.clone(), new_dep);
 
-        wrap_err!(
-            write_state_file(&state_file_path, &cur_deps),
-            InstallDepsError::WriteCurDepsAfterInstallFailed,
-            dep_name.clone(),
-            state_file_path,
-        );
+        write_state_file(&state_file_path, &cur_deps)
+            .with_context(|| WriteCurDepsAfterInstallFailed{
+                dep_name: dep_name.clone(),
+                state_file_path: state_file_path.clone(),
+            })?;
     }
 
     // We write the state file one final time in case there were no actions.
-    wrap_err!(
-        write_state_file(&state_file_path, &cur_deps),
-        InstallDepsError::FinalWriteCurDepsFailed,
-        state_file_path,
-    );
+    write_state_file(&state_file_path, &cur_deps)
+        .context(FinalWriteCurDepsFailed{state_file_path})?;
 
     Ok(())
 }
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug)]
-enum InstallDepsError<E> {
-    RemoveOldDepOutputDirFailed(IoError, String, PathBuf),
-    WriteCurDepsAfterRemoveFailed(WriteStateFileError, String, PathBuf),
-    CreateDepOutputDirFailed(IoError, String, PathBuf),
-    WriteCurDepsAfterInstallFailed(WriteStateFileError, String, PathBuf),
-    FinalWriteCurDepsFailed(WriteStateFileError, PathBuf),
-    FetchFailed(FetchError<E>, String),
+#[derive(Debug, Snafu)]
+enum InstallDepsError<E>
+where
+    E: Error + 'static
+{
+    RemoveOldDepOutputDirFailed{
+        source: IoError,
+        dep_name: String,
+        path: PathBuf,
+    },
+    WriteCurDepsAfterRemoveFailed{
+        source: WriteStateFileError,
+        dep_name: String,
+        state_file_path: PathBuf,
+    },
+    CreateDepOutputDirFailed{source: IoError, dep_name: String, path: PathBuf},
+    WriteCurDepsAfterInstallFailed{
+        source: WriteStateFileError,
+        dep_name: String,
+        state_file_path: PathBuf,
+    },
+    FinalWriteCurDepsFailed{
+        source: WriteStateFileError,
+        state_file_path: PathBuf,
+    },
+    FetchFailed{source: FetchError<E>, dep_name: String},
 }
 
 // `actions` returns the actions that must be taken to transform `cur_deps`
 // into `new_deps`.
 fn actions<'a>(
-    cur_deps: &HashMap<String, Dependency<'a, String>>,
-    new_deps: &HashMap<String, Dependency<'a, String>>,
+    cur_deps: &HashMap<String, Dependency<'a, GitCmdError>>,
+    new_deps: &HashMap<String, Dependency<'a, GitCmdError>>,
 )
     -> Vec<(Action, String)>
 {
@@ -443,152 +445,149 @@ enum Action {
 
 fn write_state_file<'a>(
     state_file_path: &PathBuf,
-    cur_deps: &HashMap<String, Dependency<'a, String>>,
+    cur_deps: &HashMap<String, Dependency<'a, GitCmdError>>,
 )
     -> Result<(), WriteStateFileError>
 {
-    let mut file = wrap_err!(
-        OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&state_file_path),
-        WriteStateFileError::OpenFailed,
-    );
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&state_file_path)
+        .context(OpenFailed)?;
 
     for (cur_dep_name, cur_dep) in cur_deps {
-        wrap_err!(
-            file.write(format!(
-                "{} {} {} {}\n",
-                cur_dep_name,
-                cur_dep.tool.name(),
-                cur_dep.source,
-                cur_dep.version,
-            ).as_bytes()),
-            WriteStateFileError::WriteDepLineFailed,
-        );
+        file.write(format!(
+            "{} {} {} {}\n",
+            cur_dep_name,
+            cur_dep.tool.name(),
+            cur_dep.source,
+            cur_dep.version,
+        ).as_bytes())
+            .context(WriteDepLineFailed)?;
     }
 
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 enum WriteStateFileError {
-    OpenFailed(IoError),
-    WriteDepLineFailed(IoError),
+    OpenFailed{source: IoError},
+    WriteDepLineFailed{source: IoError},
 }
 
-fn print_install_error(err: InstallError<String>, deps_file_name: &str) {
+fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
     match err {
-        InstallError::GetCurrentDirFailed(io_err) =>
-            eprintln!("Couldn't get the current directory: {}", io_err),
+        InstallError::GetCurrentDirFailed{source} =>
+            eprintln!("Couldn't get the current directory: {}", source),
         InstallError::NoDepsFileFound =>
             eprintln!(
                 "Couldn't find the dependency file '{}' in the current \
                  directory or parent directories",
                 deps_file_name,
             ),
-        InstallError::ConvDepsFileUtf8Failed(err) =>
+        InstallError::ConvDepsFileUtf8Failed{source} =>
             eprintln!(
                 "The dependency file contains an invalid UTF-8 sequence after \
                  byte {}",
-                err.utf8_error().valid_up_to(),
+                source.utf8_error().valid_up_to(),
             ),
-        InstallError::ParseDepsConfFailed(err) =>
-            print_parse_deps_conf_error(err),
-        InstallError::ReadStateFileFailed(io_err, state_file_path) =>
+        InstallError::ParseDepsConfFailed{source} =>
+            print_parse_deps_conf_error(source),
+        InstallError::ReadStateFileFailed{source, path} =>
             eprintln!(
                 "Couldn't read the state file ('{}'): {}",
-                render_path(&state_file_path),
-                io_err,
+                render_path(&path),
+                source,
             ),
-        InstallError::ConvStateFileUtf8Failed(err, state_file_path) =>
+        InstallError::ConvStateFileUtf8Failed{source, path} =>
             eprintln!(
                 "The state file ('{}') contains an invalid UTF-8 sequence \
                  after byte {}",
-                render_path(&state_file_path),
-                err.utf8_error().valid_up_to(),
+                render_path(&path),
+                source.utf8_error().valid_up_to(),
             ),
-        InstallError::ParseStateFileFailed(err, state_file_path) =>
+        InstallError::ParseStateFileFailed{source, path} =>
             eprintln!(
                 "The state file ('{}') is invalid ({}), please remove this \
                  file and try again",
-                render_path(&state_file_path),
-                render_parse_deps_error(err),
+                render_path(&path),
+                render_parse_deps_error(source),
             ),
-        InstallError::CreateMainOutputDirFailed(io_err, path) =>
+        InstallError::CreateMainOutputDirFailed{source, path} =>
             eprintln!(
                 "Couldn't create {}, the main output directory: {}",
                 render_path(&path),
-                io_err,
+                source,
             ),
-        InstallError::InstallDepsError(err) =>
-            print_install_deps_error(err),
+        InstallError::InstallDepsFailed{source} =>
+            print_install_deps_error(source),
     }
 }
 
-fn print_install_deps_error(err: InstallDepsError<String>) {
+fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
     match err {
-        InstallDepsError::RemoveOldDepOutputDirFailed(io_err, dep, path) =>
+        InstallDepsError::RemoveOldDepOutputDirFailed{
+            source,
+            dep_name,
+            path,
+        } =>
             eprintln!(
                 "Couldn't remove '{}', the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
-                dep,
-                io_err,
+                dep_name,
+                source,
             ),
-        InstallDepsError::WriteCurDepsAfterRemoveFailed(
-            err,
-            dep,
-            state_file_path
-        ) =>
+        InstallDepsError::WriteCurDepsAfterRemoveFailed{
+            source,
+            dep_name,
+            state_file_path,
+        } =>
             print_write_cur_deps_err(
-                err,
+                source,
                 &state_file_path,
-                &format!("removing '{}'", dep),
+                &format!("removing '{}'", dep_name),
             ),
-        InstallDepsError::CreateDepOutputDirFailed(io_err, dep, path) =>
+        InstallDepsError::CreateDepOutputDirFailed{source, dep_name, path} =>
             eprintln!(
                 "Couldn't create {}, the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
-                dep,
-                io_err,
+                dep_name,
+                source,
             ),
-        InstallDepsError::WriteCurDepsAfterInstallFailed(
-            err,
-            dep,
+        InstallDepsError::WriteCurDepsAfterInstallFailed{
+            source,
+            dep_name,
             state_file_path,
-        ) =>
+        } =>
             print_write_cur_deps_err(
-                err,
+                source,
                 &state_file_path,
-                &format!("installing '{}'", dep),
+                &format!("installing '{}'", dep_name),
             ),
-        InstallDepsError::FinalWriteCurDepsFailed(
-            err,
-            state_file_path,
-        ) =>
+        InstallDepsError::FinalWriteCurDepsFailed{source, state_file_path} =>
             print_write_cur_deps_err(
-                err,
+                source,
                 &state_file_path,
                 "updating dependencies",
             ),
-        InstallDepsError::FetchFailed(err, dep_name) =>
-            match err {
-                FetchError::RetrieveFailed(msg) =>
+        InstallDepsError::FetchFailed{source, dep_name} =>
+            match source {
+                FetchError::RetrieveFailed{source} =>
                     eprintln!(
                         "Couldn't retrieve the source for the '{}' \
                          dependency: {}",
                         dep_name,
-                        msg,
+                        render_git_cmd_err(source),
                     ),
-                FetchError::VersionChangeFailed(msg) =>
+                FetchError::VersionChangeFailed{source} =>
                     eprintln!(
                         "Couldn't change the version for the '{}' dependency: \
                          {}",
                         dep_name,
-                        msg,
+                        render_git_cmd_err(source),
                     ),
             },
     }
@@ -600,37 +599,37 @@ fn print_parse_deps_conf_error(err: ParseDepsConfError) {
             eprintln!(
                 "The dependency file doesn't contain an output directory"
             ),
-        ParseDepsConfError::ParseDepsFailed(err) =>
-            eprintln!("{}", render_parse_deps_error(err)),
+        ParseDepsConfError::ParseDepsFailed{source} =>
+            eprintln!("{}", render_parse_deps_error(source)),
     }
 }
 
 fn render_parse_deps_error(err: ParseDepsError) -> String {
     match err {
-        ParseDepsError::DupDepName(ln_num, dep, orig_ln_num) => {
+        ParseDepsError::DupDepName{ln_num, dep_name, orig_ln_num} => {
             format!(
                 "Line {}: A dependency named '{}' is already defined on line \
                  {}",
                 ln_num,
-                dep,
+                dep_name,
                 orig_ln_num,
             )
         },
-        ParseDepsError::ReservedDepName(ln_num, dep) => {
+        ParseDepsError::ReservedDepName{ln_num, dep_name} => {
             format!(
                 "Line {}: '{}' is a reserved name and can't be used as a \
                  dependency name",
                 ln_num,
-                dep,
+                dep_name,
             )
         },
-        ParseDepsError::DepNameContainsInvalidChar(
+        ParseDepsError::DepNameContainsInvalidChar{
             ln_num,
-            dep,
+            dep_name,
             bad_char_idx,
-        ) => {
+        } => {
             let mut bad_char = "".to_string();
-            if let Some(chr) = dep.chars().nth(bad_char_idx) {
+            if let Some(chr) = dep_name.chars().nth(bad_char_idx) {
                 bad_char = format!(" ('{}')", chr);
             }
             format!(
@@ -638,23 +637,19 @@ fn render_parse_deps_error(err: ParseDepsError) -> String {
                  {}; dependency names can only contain numbers, letters, \
                  hyphens, underscores and periods",
                 ln_num,
-                dep,
+                dep_name,
                 bad_char,
                 bad_char_idx + 1,
             )
         },
-        ParseDepsError::InvalidDepSpec(ln_num, ln) => {
+        ParseDepsError::InvalidDepSpec{ln_num, line} => {
             format!(
                 "Line {}: Invalid dependency specification: '{}'",
                 ln_num,
-                ln,
+                line,
             )
         },
-        ParseDepsError::UnknownTool(
-            ln_num,
-            dep_name,
-            tool_name,
-        ) => {
+        ParseDepsError::UnknownTool{ln_num, dep_name, tool_name} => {
             format!(
                 "Line {}: The '{}' dependency specifies an invalid tool name \
                  ('{}'); the supported tool is 'git'",
@@ -672,19 +667,19 @@ fn print_write_cur_deps_err(
     action: &str,
 ) {
     match err {
-        WriteStateFileError::OpenFailed(io_err) =>
+        WriteStateFileError::OpenFailed{source} =>
             eprintln!(
                 "Couldn't open the state file ('{}') for writing after {}: {}",
                 render_path(state_file_path),
                 action,
-                io_err,
+                source,
             ),
-        WriteStateFileError::WriteDepLineFailed(io_err) =>
+        WriteStateFileError::WriteDepLineFailed{source} =>
             eprintln!(
                 "Couldn't write to the state file ('{}') after {}: {}",
                 render_path(state_file_path),
                 action,
-                io_err,
+                source,
             ),
     }
 }
@@ -694,5 +689,50 @@ fn render_path(path: &PathBuf) -> String {
         s.to_string()
     } else {
         format!("{:?}", path)
+    }
+}
+
+fn render_git_cmd_err(err: GitCmdError) -> String {
+    match err {
+        GitCmdError::StartFailed{source, args} => {
+            format!("couldn't start `git {}`: {}", args.join(" "), source)
+        },
+        GitCmdError::NotSuccess{args, output} => {
+            let render_output = |bytes, name, prefix| {
+                if let Ok(s) = str::from_utf8(bytes) {
+                    prefix_lines(s, prefix)
+                } else {
+                    format!("{} (not UTF-8): {:?}", name, bytes)
+                }
+            };
+
+            format!(
+                "`git {}` failed with the following output:\n\n{}{}",
+                args.join(" "),
+                render_output(&output.stdout, "STDOUT", "[>] "),
+                render_output(&output.stderr, "STDERR", "[!] "),
+            )
+        },
+    }
+}
+
+fn prefix_lines(src: &str, pre: &str) -> String {
+    if src.is_empty() {
+        return "".to_string();
+    }
+
+    let tgt = format!(
+        "{}{}",
+        pre,
+        &src.replace("\n", &format!("\n{}", pre)),
+    );
+
+    if src.ends_with('\n') {
+        match tgt.strip_suffix(pre) {
+            Some(s) => s.to_string(),
+            None => tgt,
+        }
+    } else {
+        tgt
     }
 }

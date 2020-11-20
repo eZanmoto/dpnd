@@ -50,17 +50,22 @@ could fit onto one line. For example:
         InstallError::GetCurrentDirFailed,
     );
 
-#### `.expect()`
+#### `.context()`, `.with_context()` and `.unwrap_or_else()`
 
-`.expect()` must only be used in tests, and should always be on its own line.
-For example, instead of the following:
+`.context()`, `.with_context()` and `.unwrap_or_else()` should always be on
+their own line. For example, instead of the following:
 
-    fs::create_dir(&path).expect("couldn't create directory");
+    fs::create_dir(&path).context(CreateMainDirFailed{path: path});
 
 Do the following:
 
     fs::create_dir(&path)
-        .expect("couldn't create directory");
+        .context(CreateMainDirFailed{path: path});
+
+#### `.expect()`
+
+`.expect()` should follow the same rules as `.context()`, and additionally must
+only be used in tests.
 
 #### `match` branches
 
@@ -112,8 +117,8 @@ Do the following:
 
 #### Return type line
 
-If a return type is specified on its own line then it should be indented and the
-function's opening brace should be on the following line. For example:
+If a return type is specified on its own line then it should be indented, and
+the function's opening brace should be on the following line. For example:
 
     fn read_deps_file(start: PathBuf, deps_file_name: &str)
         -> Option<(PathBuf, Vec<u8>)>
@@ -158,17 +163,17 @@ One chained function call is allowable on a single line. For example:
 
 ### Errors
 
-Error `enum`s should end with `Error`. This project also identifies two types of
-error value. An error that contains a nested error is considered a "failed
-operation" error. Such error values should end with `Failed` and the nested
-error(s) should be the first listed in the associated tuple data. For example:
+Error `enum`s should end with `Error`. Failed operation errors (as defined in
+`docs/errors.md`) should end with `Failed`, and the nested error(s) should be
+the first listed in the associated data. For example:
 
     enum InstallError<E> {
-        GetCurrentDirFailed(IoError),
+        ...
+        ReadStateFileFailed{source: IoError, path: PathBuf},
         ...
     }
 
-Any other error is considered a "root" error, and has no required naming or data
+Root errors (as defined in `docs/errors.md`) have no required naming or data
 conventions. For example:
 
     enum InstallError<E> {
@@ -178,6 +183,6 @@ conventions. For example:
     }
 
     enum ParseDepsError {
-        InvalidDependencySpec(usize, String),
-        UnknownTool(usize, String, String),
+        InvalidDependencySpec{line_num: usize, line: String},
+        UnknownTool{line_num: usize, dep_name: String, tool_name: String},
     }
