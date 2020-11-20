@@ -7,6 +7,7 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::fmt::Result as FmtResult;
+use std::io::Error as IoError;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
@@ -67,21 +68,20 @@ impl DepTool<GitCmdError> for Git {
             vec!["checkout", &vsn],
         ];
 
-        for (i, git_args) in gits_args.iter().enumerate() {
+        for (i, git_args) in gits_args.into_iter().enumerate() {
             let maybe_output =
                 Command::new("git")
-                    .args(git_args)
+                    .args(&git_args)
                     .current_dir(out_dir)
                     .output();
 
             let output = match maybe_output {
                 Ok(output) => output,
-                Err(err) => {
-                    let err = GitCmdError{msg: format!(
-                        "couldn't start `git {}`: {}",
-                        git_args.join(" "),
-                        err,
-                    )};
+                Err(source) => {
+                    let err = GitCmdError::StartFailed{
+                        source,
+                        args: owned_strs_to_strings(git_args),
+                    };
                     if i == 0 {
                         return Err(FetchError::RetrieveFailed(err));
                     } else {
@@ -91,8 +91,9 @@ impl DepTool<GitCmdError> for Git {
             };
 
             if !output.status.success() {
-                let err = GitCmdError{
-                    msg: render_git_failure(&git_args.join(" "), &output),
+                let err = GitCmdError::NotSuccess{
+                    args: owned_strs_to_strings(git_args),
+                    output,
                 };
                 if i == 0 {
                     return Err(FetchError::RetrieveFailed(err));
@@ -106,32 +107,48 @@ impl DepTool<GitCmdError> for Git {
     }
 }
 
+fn owned_strs_to_strings(strs: Vec<&str>) -> Vec<String> {
+    strs.into_iter()
+        .map(String::from)
+        .collect()
+}
+
 #[derive(Debug)]
-pub struct GitCmdError {
-    msg: String,
+pub enum GitCmdError {
+    StartFailed{source: IoError, args: Vec<String>},
+    NotSuccess{args: Vec<String>, output: Output},
 }
 
 impl Display for GitCmdError {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{}", self.msg)
-    }
-}
+        match self {
+            GitCmdError::StartFailed{source, args} => {
+                write!(
+                    f,
+                    "couldn't start `git {}`: {}",
+                    args.join(" "),
+                    source,
+                )
+            },
+            GitCmdError::NotSuccess{args, output} => {
+                let render_output = |bytes, name, prefix| {
+                    if let Ok(s) = str::from_utf8(bytes) {
+                        prefix_lines(s, prefix)
+                    } else {
+                        format!("{} (not UTF-8): {:?}", name, bytes)
+                    }
+                };
 
-fn render_git_failure(args: &str, output: &Output) -> String {
-    let render_output = |bytes, name, prefix| {
-        if let Ok(s) = str::from_utf8(bytes) {
-            prefix_lines(s, prefix)
-        } else {
-            format!("{} (not UTF-8): {:?}", name, bytes)
+                write!(
+                    f,
+                    "`git {}` failed with the following output:\n\n{}{}",
+                    args.join(" "),
+                    render_output(&output.stdout, "STDOUT", "[>] "),
+                    render_output(&output.stderr, "STDERR", "[!] "),
+                )
+            },
         }
-    };
-
-    format!(
-        "`git {}` failed with the following output:\n\n{}{}",
-        args,
-        render_output(&output.stdout, "STDOUT", "[>] "),
-        render_output(&output.stderr, "STDERR", "[!] "),
-    )
+    }
 }
 
 fn prefix_lines(src: &str, pre: &str) -> String {
