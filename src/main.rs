@@ -4,8 +4,7 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::fmt::Debug;
-use std::fmt::Display;
+use std::error::Error;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Error as IoError;
@@ -14,8 +13,9 @@ use std::io::Write;
 use std::iter::Enumerate;
 use std::path::PathBuf;
 use std::process;
-use std::string::FromUtf8Error;
+use std::str;
 use std::str::Lines;
+use std::string::FromUtf8Error;
 
 mod dep_tools;
 
@@ -120,7 +120,7 @@ fn install(
 #[derive(Debug, Snafu)]
 enum InstallError<E>
 where
-    E: Display + Debug + 'static
+    E: Error + 'static
 {
     GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
@@ -381,7 +381,7 @@ fn install_deps<'a>(
 #[derive(Debug, Snafu)]
 enum InstallDepsError<E>
 where
-    E: Display + Debug + 'static
+    E: Error + 'static
 {
     RemoveOldDepOutputDirFailed{
         source: IoError,
@@ -575,19 +575,19 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
             ),
         InstallDepsError::FetchFailed{source, dep_name} =>
             match source {
-                FetchError::RetrieveFailed(msg) =>
+                FetchError::RetrieveFailed{source} =>
                     eprintln!(
                         "Couldn't retrieve the source for the '{}' \
                          dependency: {}",
                         dep_name,
-                        msg,
+                        render_git_cmd_err(source),
                     ),
-                FetchError::VersionChangeFailed(msg) =>
+                FetchError::VersionChangeFailed{source} =>
                     eprintln!(
                         "Couldn't change the version for the '{}' dependency: \
                          {}",
                         dep_name,
-                        msg,
+                        render_git_cmd_err(source),
                     ),
             },
     }
@@ -689,5 +689,50 @@ fn render_path(path: &PathBuf) -> String {
         s.to_string()
     } else {
         format!("{:?}", path)
+    }
+}
+
+fn render_git_cmd_err(err: GitCmdError) -> String {
+    match err {
+        GitCmdError::StartFailed{source, args} => {
+            format!("couldn't start `git {}`: {}", args.join(" "), source)
+        },
+        GitCmdError::NotSuccess{args, output} => {
+            let render_output = |bytes, name, prefix| {
+                if let Ok(s) = str::from_utf8(bytes) {
+                    prefix_lines(s, prefix)
+                } else {
+                    format!("{} (not UTF-8): {:?}", name, bytes)
+                }
+            };
+
+            format!(
+                "`git {}` failed with the following output:\n\n{}{}",
+                args.join(" "),
+                render_output(&output.stdout, "STDOUT", "[>] "),
+                render_output(&output.stderr, "STDERR", "[!] "),
+            )
+        },
+    }
+}
+
+fn prefix_lines(src: &str, pre: &str) -> String {
+    if src.is_empty() {
+        return "".to_string();
+    }
+
+    let tgt = format!(
+        "{}{}",
+        pre,
+        &src.replace("\n", &format!("\n{}", pre)),
+    );
+
+    if src.ends_with('\n') {
+        match tgt.strip_suffix(pre) {
+            Some(s) => s.to_string(),
+            None => tgt,
+        }
+    } else {
+        tgt
     }
 }
