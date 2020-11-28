@@ -34,39 +34,42 @@ use snafu::ResultExt;
 use snafu::Snafu;
 
 fn main() {
-    let deps_file_name = "dpnd.txt";
-    let state_file_name = format!("current_{}", deps_file_name);
-    let bad_dep_name_chars = Regex::new(r"[^a-zA-Z0-9._-]").unwrap();
+    let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> = HashMap::new();
+    tools.insert("git".to_string(), &Git{});
 
-    let install_result = install(
-        &deps_file_name,
-        &state_file_name,
-        &bad_dep_name_chars,
-    );
+    let deps_file_name = "dpnd.txt";
+    let installer = Installer{
+        deps_file_name: deps_file_name.to_string(),
+        state_file_name: format!("current_{}", deps_file_name),
+        bad_dep_name_chars: Regex::new(r"[^a-zA-Z0-9._-]").unwrap(),
+        tools,
+    };
+
+    let install_result = install(&installer);
     if let Err(err) = install_result {
-        print_install_error(err, deps_file_name);
+        print_install_error(err, &installer.deps_file_name);
         process::exit(1);
     }
 }
 
-fn install(
-    deps_file_name: &str,
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-)
+struct Installer<'a, E> {
+    deps_file_name: String,
+    state_file_name: String,
+    bad_dep_name_chars: Regex,
+    tools: HashMap<String, &'a (dyn DepTool<E> + 'a)>,
+}
+
+fn install(installer: &Installer<GitCmdError>)
     -> Result<(), InstallError<GitCmdError>>
 {
     let cwd = env::current_dir()
         .context(GetCurrentDirFailed{})?;
 
     let (proj_dir, raw_deps_spec) =
-        match read_deps_file(cwd, &deps_file_name) {
+        match read_deps_file(cwd, &installer.deps_file_name) {
             Some(v) => v,
             None => return Err(InstallError::NoDepsFileFound),
         };
-
-    let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> = HashMap::new();
-    tools.insert("git".to_string(), &Git{});
 
     let mut proj_dirs = vec![(proj_dir, raw_deps_spec)];
 
@@ -75,26 +78,16 @@ fn install(
         let deps_spec = String::from_utf8(raw_deps_spec)
             .context(ConvDepsFileUtf8Failed{})?;
 
-        let conf = parse_deps_conf(
-            &deps_spec,
-            state_file_name,
-            bad_dep_name_chars,
-            &tools,
-        )
+        let conf = parse_deps_conf(&installer, &deps_spec)
             .context(ParseDepsConfFailed{})?;
 
-        install_proj_deps(
-            state_file_name,
-            bad_dep_name_chars,
-            &tools,
-            &proj_dir,
-            &conf,
-        )
+        install_proj_deps(&installer, &proj_dir, &conf)
             .context(InstallProjDepsFailed{})?;
 
         for dep_name in conf.deps.keys() {
             let dep_proj_path = proj_dir.join(&conf.output_dir).join(dep_name);
-            let dep_deps_file_path = dep_proj_path.join(deps_file_name);
+            let dep_deps_file_path =
+                dep_proj_path.join(&installer.deps_file_name);
             let maybe_raw_deps_spec = try_read(&dep_deps_file_path)
                 .with_context(|| ReadNestedDepsFileFailed{
                     path: dep_deps_file_path,
@@ -145,14 +138,12 @@ where
 }
 
 fn install_proj_deps<'a>(
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
+    installer: &Installer<'a, GitCmdError>,
     proj_dir: &PathBuf,
     conf: &DepsConf<'a, GitCmdError>,
 ) -> Result<(), InstallProjDepsError<GitCmdError>> {
     let output_dir = proj_dir.join(&conf.output_dir);
-    let state_file_path = output_dir.join(state_file_name);
+    let state_file_path = output_dir.join(&installer.state_file_name);
     let state_file_conts = match fs::read(&state_file_path) {
         Ok(conts) => {
             conts
@@ -174,18 +165,12 @@ fn install_proj_deps<'a>(
             || ConvStateFileUtf8Failed{path: state_file_path.clone()}
         )?;
 
-    let cur_deps = parse_deps(
-        &mut state_spec.lines().enumerate(),
-        state_file_name,
-        bad_dep_name_chars,
-        &tools,
-    )
+    let cur_deps = parse_deps(&installer, &mut state_spec.lines().enumerate())
         .with_context(|| ParseStateFileFailed{path: state_file_path.clone()})?;
 
     fs::create_dir_all(&output_dir)
         .with_context(|| CreateMainOutputDirFailed{path: output_dir.clone()})?;
 
-    let state_file_path = output_dir.join(state_file_name);
     install_deps(&output_dir, state_file_path, cur_deps, conf.deps.clone())
         .context(InstallDepsFailed{})?;
 
@@ -223,12 +208,7 @@ fn read_deps_file(start: PathBuf, deps_file_name: &str)
     }
 }
 
-fn parse_deps_conf<'a>(
-    conts: &str,
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
-)
+fn parse_deps_conf<'a>(installer: &Installer<'a, GitCmdError>, conts: &str)
     -> Result<DepsConf<'a, GitCmdError>, ParseDepsConfError>
 {
     let mut lines = conts.lines().enumerate();
@@ -236,12 +216,7 @@ fn parse_deps_conf<'a>(
     if let Some(output_dir) = parse_output_dir(&mut lines) {
         Ok(DepsConf {
             output_dir,
-            deps: parse_deps(
-                &mut lines,
-                state_file_name,
-                bad_dep_name_chars,
-                &tools,
-            )
+            deps: parse_deps(&installer, &mut lines)
                 .context(ParseDepsFailed{})?,
         })
     } else {
@@ -280,10 +255,8 @@ fn conf_line_is_skippable(ln: &str) -> bool {
 }
 
 fn parse_deps<'a>(
+    installer: &Installer<'a, GitCmdError>,
     lines: &mut Enumerate<Lines>,
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
 )
     -> Result<HashMap<String, Dependency<'a, GitCmdError>>, ParseDepsError>
 {
@@ -307,13 +280,13 @@ fn parse_deps<'a>(
         }
 
         let local_name = words[0].to_string();
-        if let Some(found) = bad_dep_name_chars.find(&local_name) {
+        if let Some(found) = installer.bad_dep_name_chars.find(&local_name) {
             return Err(ParseDepsError::DepNameContainsInvalidChar{
                 ln_num,
                 dep_name: local_name.clone(),
                 bad_char_idx: found.start(),
             });
-        } else if local_name == state_file_name {
+        } else if local_name == installer.state_file_name {
             return Err(ParseDepsError::ReservedDepName{
                 ln_num,
                 dep_name: local_name.clone(),
@@ -331,7 +304,7 @@ fn parse_deps<'a>(
         }
 
         let tool_name = words[1].to_string();
-        let tool = match tools.get(&tool_name) {
+        let tool = match installer.tools.get(&tool_name) {
             Some(tool) => *tool,
             None => return Err(ParseDepsError::UnknownTool{
                 ln_num,
