@@ -11,6 +11,7 @@ use std::io::Error as IoError;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::iter::Enumerate;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::str;
@@ -23,6 +24,7 @@ use dep_tools::DepTool;
 use dep_tools::FetchError;
 use dep_tools::Git;
 use dep_tools::GitCmdError;
+use dep_tools::Version;
 
 extern crate regex;
 extern crate snafu;
@@ -57,26 +59,99 @@ fn install(
     let cwd = env::current_dir()
         .context(GetCurrentDirFailed{})?;
 
-    let (deps_dir, deps_spec) = match read_deps_file(cwd, &deps_file_name) {
-        Some(v) => v,
-        None => return Err(InstallError::NoDepsFileFound),
-    };
-
-    let deps_spec = String::from_utf8(deps_spec)
-        .context(ConvDepsFileUtf8Failed{})?;
+    let (proj_dir, raw_deps_spec) =
+        match read_deps_file(cwd, &deps_file_name) {
+            Some(v) => v,
+            None => return Err(InstallError::NoDepsFileFound),
+        };
 
     let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> = HashMap::new();
     tools.insert("git".to_string(), &Git{});
 
-    let conf = parse_deps_conf(
-        &deps_spec,
-        state_file_name,
-        bad_dep_name_chars,
-        &tools,
-    )
-        .context(ParseDepsConfFailed{})?;
+    let mut proj_dirs = vec![(proj_dir, raw_deps_spec)];
 
-    let output_dir = deps_dir.join(conf.output_dir);
+    while let Some((proj_dir, raw_deps_spec)) = proj_dirs.pop() {
+
+        let deps_spec = String::from_utf8(raw_deps_spec)
+            .context(ConvDepsFileUtf8Failed{})?;
+
+        let conf = parse_deps_conf(
+            &deps_spec,
+            state_file_name,
+            bad_dep_name_chars,
+            &tools,
+        )
+            .context(ParseDepsConfFailed{})?;
+
+        install_proj_deps(
+            state_file_name,
+            bad_dep_name_chars,
+            &tools,
+            &proj_dir,
+            &conf,
+        )
+            .context(InstallProjDepsFailed{})?;
+
+        for dep_name in conf.deps.keys() {
+            let dep_proj_path = proj_dir.join(&conf.output_dir).join(dep_name);
+            let dep_deps_file_path = dep_proj_path.join(deps_file_name);
+            let maybe_raw_deps_spec = try_read(&dep_deps_file_path)
+                .with_context(|| ReadNestedDepsFileFailed{
+                    path: dep_deps_file_path,
+                    dep_name,
+                    dep_proj_path: dep_proj_path.clone(),
+                })?;
+
+            if let Some(raw_deps_spec) = maybe_raw_deps_spec {
+                proj_dirs.push((dep_proj_path, raw_deps_spec));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn try_read<P: AsRef<Path>>(path: P) -> Result<Option<Vec<u8>>, IoError> {
+    match fs::read(path) {
+        Ok(conts) => {
+            Ok(Some(conts))
+        },
+        Err(err) => {
+            if err.kind() == ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(err)
+            }
+        },
+    }
+}
+
+#[derive(Debug, Snafu)]
+enum InstallError<E>
+where
+    E: Error + 'static
+{
+    GetCurrentDirFailed{source: IoError},
+    NoDepsFileFound,
+    ConvDepsFileUtf8Failed{source: FromUtf8Error},
+    ParseDepsConfFailed{source: ParseDepsConfError},
+    InstallProjDepsFailed{source: InstallProjDepsError<E>},
+    ReadNestedDepsFileFailed{
+        source: IoError,
+        path: PathBuf,
+        dep_name: String,
+        dep_proj_path: PathBuf,
+    },
+}
+
+fn install_proj_deps<'a>(
+    state_file_name: &str,
+    bad_dep_name_chars: &Regex,
+    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
+    proj_dir: &PathBuf,
+    conf: &DepsConf<'a, GitCmdError>,
+) -> Result<(), InstallProjDepsError<GitCmdError>> {
+    let output_dir = proj_dir.join(&conf.output_dir);
     let state_file_path = output_dir.join(state_file_name);
     let state_file_conts = match fs::read(&state_file_path) {
         Ok(conts) => {
@@ -86,7 +161,7 @@ fn install(
             if err.kind() == ErrorKind::NotFound {
                 vec![]
             } else {
-                return Err(InstallError::ReadStateFileFailed{
+                return Err(InstallProjDepsError::ReadStateFileFailed{
                     source: err,
                     path: state_file_path,
                 });
@@ -111,21 +186,18 @@ fn install(
         .with_context(|| CreateMainOutputDirFailed{path: output_dir.clone()})?;
 
     let state_file_path = output_dir.join(state_file_name);
-    install_deps(&output_dir, state_file_path, cur_deps, conf.deps)
+    install_deps(&output_dir, state_file_path, cur_deps, conf.deps.clone())
         .context(InstallDepsFailed{})?;
 
     Ok(())
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Snafu)]
-enum InstallError<E>
+enum InstallProjDepsError<E>
 where
     E: Error + 'static
 {
-    GetCurrentDirFailed{source: IoError},
-    NoDepsFileFound,
-    ConvDepsFileUtf8Failed{source: FromUtf8Error},
-    ParseDepsConfFailed{source: ParseDepsConfError},
     ReadStateFileFailed{source: IoError, path: PathBuf},
     ConvStateFileUtf8Failed{source: FromUtf8Error, path: PathBuf},
     ParseStateFileFailed{source: ParseDepsError, path: PathBuf},
@@ -273,7 +345,7 @@ fn parse_deps<'a>(
             Dependency{
                 tool,
                 source: words[2].to_string(),
-                version: words[3].to_string(),
+                version: Version(words[3].to_string()),
             },
             ln_num,
         ));
@@ -292,7 +364,17 @@ fn parse_deps<'a>(
 struct Dependency<'a, E> {
     tool: &'a (dyn DepTool<E> + 'a),
     source: String,
-    version: String,
+    version: Version,
+}
+
+impl<'a, E> Clone for Dependency<'a, E> {
+    fn clone(&self) -> Self {
+        Dependency{
+            tool: self.tool,
+            source: self.source.clone(),
+            version: self.version.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Snafu)]
@@ -343,8 +425,7 @@ fn install_deps<'a>(
 
         let new_dep = new_deps.remove(&dep_name)
             .unwrap_or_else(|| panic!(
-                "dependency '{}' wasn't in the map of current \
-                 dependencies",
+                "dependency '{}' wasn't in the map of current dependencies",
                 dep_name,
             ));
 
@@ -356,8 +437,8 @@ fn install_deps<'a>(
             })?;
 
         new_dep.tool.fetch(
-            (&new_dep.source).to_string(),
-            (&new_dep.version).to_string(),
+            new_dep.source.clone(),
+            new_dep.version.clone(),
             &dir,
         )
             .context(FetchFailed{dep_name: dep_name.clone()})?;
@@ -494,33 +575,54 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
             ),
         InstallError::ParseDepsConfFailed{source} =>
             print_parse_deps_conf_error(source),
-        InstallError::ReadStateFileFailed{source, path} =>
+        InstallError::InstallProjDepsFailed{source} =>
+            print_install_proj_deps_error(source),
+        InstallError::ReadNestedDepsFileFailed{
+            source,
+            path,
+            dep_name,
+            dep_proj_path,
+        } =>
+            eprintln!(
+                "Couldn't read the dependency file ('{}') for the nested \
+                 dependency '{}' ('{}'): {}",
+                render_path(&path),
+                dep_name,
+                render_path(&dep_proj_path),
+                source,
+            ),
+    }
+}
+
+fn print_install_proj_deps_error(err: InstallProjDepsError<GitCmdError>) {
+    match err {
+        InstallProjDepsError::ReadStateFileFailed{source, path} =>
             eprintln!(
                 "Couldn't read the state file ('{}'): {}",
                 render_path(&path),
                 source,
             ),
-        InstallError::ConvStateFileUtf8Failed{source, path} =>
+        InstallProjDepsError::ConvStateFileUtf8Failed{source, path} =>
             eprintln!(
                 "The state file ('{}') contains an invalid UTF-8 sequence \
                  after byte {}",
                 render_path(&path),
                 source.utf8_error().valid_up_to(),
             ),
-        InstallError::ParseStateFileFailed{source, path} =>
+        InstallProjDepsError::ParseStateFileFailed{source, path} =>
             eprintln!(
                 "The state file ('{}') is invalid ({}), please remove this \
                  file and try again",
                 render_path(&path),
                 render_parse_deps_error(source),
             ),
-        InstallError::CreateMainOutputDirFailed{source, path} =>
+        InstallProjDepsError::CreateMainOutputDirFailed{source, path} =>
             eprintln!(
                 "Couldn't create {}, the main output directory: {}",
                 render_path(&path),
                 source,
             ),
-        InstallError::InstallDepsFailed{source} =>
+        InstallProjDepsError::InstallDepsFailed{source} =>
             print_install_deps_error(source),
     }
 }
