@@ -39,20 +39,11 @@ use snafu::ResultExt;
 use snafu::Snafu;
 
 fn main() {
-    let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> = HashMap::new();
-    tools.insert("git".to_string(), &Git{});
-
     let deps_file_name = "dpnd.txt";
-    let installer = Installer{
-        deps_file_name: deps_file_name.to_string(),
-        state_file_name: format!("current_{}", deps_file_name),
-        bad_dep_name_chars: Regex::new(r"[^a-zA-Z0-9._-]").unwrap(),
-        tools,
-    };
 
     let install_about: &str = &format!(
         "Install dependencies defined in '{}'",
-        installer.deps_file_name,
+        deps_file_name,
     );
     let install_recursive_flag = "recursive";
 
@@ -81,12 +72,22 @@ fn main() {
 
     match args.subcommand() {
         ("install", Some(sub_args)) => {
+            let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> =
+                HashMap::new();
+            tools.insert("git".to_string(), &Git{});
+
+            let bad_dep_name_chars = Regex::new(r"[^a-zA-Z0-9._-]").unwrap();
             let install_result = install(
-                &installer,
+                &Installer{
+                    deps_file_name: deps_file_name.to_string(),
+                    state_file_name: format!("current_{}", deps_file_name),
+                    bad_dep_name_chars,
+                    tools,
+                },
                 sub_args.is_present(install_recursive_flag),
             );
             if let Err(err) = install_result {
-                print_install_error(err, &installer.deps_file_name);
+                print_install_error(err, &deps_file_name);
                 process::exit(1);
             }
         },
