@@ -296,6 +296,7 @@ fn new_test_cmd(root_test_dir: String) -> AssertCommand {
         .expect("couldn't create command for package binary");
     cmd.current_dir(root_test_dir);
     cmd.env_clear();
+    cmd.arg("install");
 
     cmd
 }

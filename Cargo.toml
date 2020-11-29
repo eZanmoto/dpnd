@@ -14,6 +14,7 @@ repository = "https://github.com/ezanmoto/dpnd"
 version = "0.1.8"
 
 [dependencies]
+clap = "2.33.3"
 snafu = "0.6.9"
 
 # See <https://crates.io/crates/regex> for more information on this section. The

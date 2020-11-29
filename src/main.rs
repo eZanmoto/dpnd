@@ -26,9 +26,14 @@ use dep_tools::Git;
 use dep_tools::GitCmdError;
 use dep_tools::Version;
 
+extern crate clap;
 extern crate regex;
 extern crate snafu;
 
+use clap::App;
+use clap::AppSettings;
+use clap::Arg;
+use clap::SubCommand;
 use regex::Regex;
 use snafu::ResultExt;
 use snafu::Snafu;
@@ -45,10 +50,51 @@ fn main() {
         tools,
     };
 
-    let install_result = install(&installer);
-    if let Err(err) = install_result {
-        print_install_error(err, &installer.deps_file_name);
-        process::exit(1);
+    let install_about: &str = &format!(
+        "Install dependencies defined in '{}'",
+        installer.deps_file_name,
+    );
+
+    let args =
+        App::new("dpnd")
+            .version(env!("CARGO_PKG_VERSION"))
+            .author(env!("CARGO_PKG_AUTHORS"))
+            .about(env!("CARGO_PKG_DESCRIPTION"))
+            .settings(&[
+                AppSettings::SubcommandRequiredElseHelp,
+                AppSettings::VersionlessSubcommands,
+            ])
+            .subcommands(vec![
+                SubCommand::with_name("install")
+                    .about(install_about)
+                    .args(&[
+                        Arg::with_name("recursive")
+                            .short("r")
+                            .long("recursive")
+                            .help(
+                                "Install dependencies found in dependencies",
+                            ),
+                    ]),
+            ])
+            .get_matches();
+
+    match args.subcommand() {
+        ("install", Some(_)) => {
+            let install_result = install(&installer);
+            if let Err(err) = install_result {
+                print_install_error(err, &installer.deps_file_name);
+                process::exit(1);
+            }
+        },
+        (arg_name, sub_args) => {
+            // All subcommands defined in `args_defn` should be handled here,
+            // so matching an unhandled command shouldn't happen.
+            panic!(
+                "unexpected command '{}' (arguments: '{:?}')",
+                arg_name,
+                sub_args,
+            );
+        },
     }
 }
 
