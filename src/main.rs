@@ -54,6 +54,7 @@ fn main() {
         "Install dependencies defined in '{}'",
         installer.deps_file_name,
     );
+    let install_recursive_flag = "recursive";
 
     let args =
         App::new("dpnd")
@@ -68,7 +69,7 @@ fn main() {
                 SubCommand::with_name("install")
                     .about(install_about)
                     .args(&[
-                        Arg::with_name("recursive")
+                        Arg::with_name(install_recursive_flag)
                             .short("r")
                             .long("recursive")
                             .help(
@@ -79,8 +80,11 @@ fn main() {
             .get_matches();
 
     match args.subcommand() {
-        ("install", Some(_)) => {
-            let install_result = install(&installer);
+        ("install", Some(sub_args)) => {
+            let install_result = install(
+                &installer,
+                sub_args.is_present(install_recursive_flag),
+            );
             if let Err(err) = install_result {
                 print_install_error(err, &installer.deps_file_name);
                 process::exit(1);
@@ -105,7 +109,7 @@ struct Installer<'a, E> {
     tools: HashMap<String, &'a (dyn DepTool<E> + 'a)>,
 }
 
-fn install(installer: &Installer<GitCmdError>)
+fn install(installer: &Installer<GitCmdError>, recurse: bool)
     -> Result<(), InstallError<GitCmdError>>
 {
     let cwd = env::current_dir()
@@ -120,7 +124,6 @@ fn install(installer: &Installer<GitCmdError>)
     let mut proj_dirs = vec![(proj_dir, raw_deps_spec)];
 
     while let Some((proj_dir, raw_deps_spec)) = proj_dirs.pop() {
-
         let deps_spec = String::from_utf8(raw_deps_spec)
             .context(ConvDepsFileUtf8Failed{})?;
 
@@ -129,6 +132,10 @@ fn install(installer: &Installer<GitCmdError>)
 
         install_proj_deps(&installer, &proj_dir, &conf)
             .context(InstallProjDepsFailed{})?;
+
+        if !recurse {
+            break;
+        }
 
         for dep_name in conf.deps.keys() {
             let dep_proj_path = proj_dir.join(&conf.output_dir).join(dep_name);

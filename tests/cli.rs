@@ -1174,6 +1174,64 @@ fn nested_deps_pulled_correctly_with_short_flag() {
 }
 
 #[test]
+// Given the dependency file contains nested dependencies
+// When the command is run without recursion
+// Then the nested dependencies are not pulled
+fn nested_deps_not_pulled_without_recursion() {
+    let mut test_deps = test_deps();
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        my_scripts git git://localhost/my_scripts.git master
+        your_scripts git git://localhost/your_scripts.git master
+    "};
+    test_deps.insert(
+        "all_scripts",
+        vec![hashmap!{
+            "dpnd.txt" => nested_deps_file_conts,
+            "script.sh" => "echo 'hello, all!'",
+        }],
+    );
+    let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
+        "nested_deps_not_pulled_without_recursion",
+        &test_deps,
+        &hashmap!{},
+    );
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        all_scripts git git://localhost/all_scripts.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "all_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::File(nested_deps_file_conts),
+                    "script.sh" => Node::File("echo 'hello, all!'"),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
 // Given the dependency file doesn't exist
 // When the command is run
 // Then the command fails with an error
