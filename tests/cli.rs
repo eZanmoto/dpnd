@@ -59,6 +59,9 @@ fn new_dep_vsn_pulled_correctly() {
     );
 }
 
+// `test_deps` defines dependencies that will be created as git repositories.
+// Each `Vec` element defines a Git commit, in order from from the initial
+// commit to the latest commit.
 fn test_deps()
     -> HashMap<&'static str, Vec<HashMap<&'static str, &'static str>>>
 {
@@ -72,6 +75,17 @@ fn test_deps()
         ],
         "their_scripts" => vec![
             hashmap!{"script.sh" => "echo 'hello, moon!'"},
+        ],
+        "all_scripts" => vec![
+            hashmap!{
+                "dpnd.txt" => indoc::indoc!{"
+                    deps
+
+                    my_scripts git git://localhost/my_scripts.git master
+                    your_scripts git git://localhost/your_scripts.git master
+                "},
+                "script.sh" => "echo 'hello, all!'",
+            }
         ],
     }
 }
@@ -1099,20 +1113,7 @@ fn nested_deps_pulled_correctly_with_long_flag() {
 }
 
 fn nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
-    let mut test_deps = test_deps();
-    let nested_deps_file_conts = indoc::indoc!{"
-        deps
-
-        my_scripts git git://localhost/my_scripts.git master
-        your_scripts git git://localhost/your_scripts.git master
-    "};
-    test_deps.insert(
-        "all_scripts",
-        vec![hashmap!{
-            "dpnd.txt" => nested_deps_file_conts,
-            "script.sh" => "echo 'hello, all!'",
-        }],
-    );
+    let test_deps = test_deps();
     let TestSetup{dep_srcs_dir, proj_dir, ..} =
         create_test_setup(&root_test_dir_name, &test_deps, &hashmap!{});
     let deps_file_conts = indoc::indoc!{"
@@ -1142,7 +1143,7 @@ fn nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
                 "current_dpnd.txt" => Node::AnyFile,
                 "all_scripts" => Node::Dir(hashmap!{
                     ".git" => Node::AnyDir,
-                    "dpnd.txt" => Node::File(nested_deps_file_conts),
+                    "dpnd.txt" => Node::AnyFile,
                     "script.sh" => Node::File("echo 'hello, all!'"),
                     "deps" => Node::Dir(hashmap!{
                         "current_dpnd.txt" => Node::AnyFile,
@@ -1178,20 +1179,7 @@ fn nested_deps_pulled_correctly_with_short_flag() {
 // When the command is run without recursion
 // Then the nested dependencies are not pulled
 fn nested_deps_not_pulled_without_recursion() {
-    let mut test_deps = test_deps();
-    let nested_deps_file_conts = indoc::indoc!{"
-        deps
-
-        my_scripts git git://localhost/my_scripts.git master
-        your_scripts git git://localhost/your_scripts.git master
-    "};
-    test_deps.insert(
-        "all_scripts",
-        vec![hashmap!{
-            "dpnd.txt" => nested_deps_file_conts,
-            "script.sh" => "echo 'hello, all!'",
-        }],
-    );
+    let test_deps = test_deps();
     let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
         "nested_deps_not_pulled_without_recursion",
         &test_deps,
@@ -1223,8 +1211,89 @@ fn nested_deps_not_pulled_without_recursion() {
                 "current_dpnd.txt" => Node::AnyFile,
                 "all_scripts" => Node::Dir(hashmap!{
                     ".git" => Node::AnyDir,
-                    "dpnd.txt" => Node::File(nested_deps_file_conts),
+                    "dpnd.txt" => Node::AnyFile,
                     "script.sh" => Node::File("echo 'hello, all!'"),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the dependency file contains nested dependencies that contain nested
+//     dependencies
+// When the command is run with `--recursive`
+// Then the nested dependencies are pulled to the correct locations with the
+//     correct contents
+fn double_nested_deps_pulled_correctly() {
+    let mut test_deps = test_deps();
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        all_scripts git git://localhost/all_scripts.git master
+    "};
+    test_deps.insert(
+        "nested_scripts",
+        vec![hashmap!{
+            "dpnd.txt" => nested_deps_file_conts,
+            "script.sh" => "echo 'hello!'",
+        }],
+    );
+    let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
+        "double_nested_deps_pulled_correctly",
+        &test_deps,
+        &hashmap!{},
+    );
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        nested_scripts git git://localhost/nested_scripts.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "nested_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::File(nested_deps_file_conts),
+                    "script.sh" => Node::File("echo 'hello!'"),
+                    "deps" => Node::Dir(hashmap!{
+                        "current_dpnd.txt" => Node::AnyFile,
+                        "all_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "dpnd.txt" => Node::AnyFile,
+                            "script.sh" => Node::File("echo 'hello, all!'"),
+                            "deps" => Node::Dir(hashmap!{
+                                "current_dpnd.txt" => Node::AnyFile,
+                                "my_scripts" => Node::Dir(hashmap!{
+                                    ".git" => Node::AnyDir,
+                                    "script.sh" =>
+                                        Node::File("echo 'hello, world!'"),
+                                }),
+                                "your_scripts" => Node::Dir(hashmap!{
+                                    ".git" => Node::AnyDir,
+                                    "script.sh" =>
+                                        Node::File("echo 'hello, sun!'"),
+                                }),
+                            }),
+                        }),
+                    }),
                 }),
             }),
         }),
