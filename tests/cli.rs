@@ -2,6 +2,7 @@
 // Use of this source code is governed by an MIT
 // licence that can be found in the LICENCE file.
 
+use std::convert::AsRef;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -271,11 +272,12 @@ fn write_test_deps_file(
     deps_file_conts
 }
 
-fn with_git_server<F, T>(dir: String, f: F) -> T
+fn with_git_server<S, F, T>(dir: S, f: F) -> T
 where
     F: FnOnce() -> T + UnwindSafe,
+    S: AsRef<str>,
 {
-    let git_exec_path = run_cmd(&dir, "git", &["--exec-path"]);
+    let git_exec_path = run_cmd(dir.as_ref(), "git", &["--exec-path"]);
 
     let git_exec_path = git_exec_path
         .strip_suffix("\n")
@@ -287,7 +289,7 @@ where
     // but we lose its PID in the process.
     let mut daemon = Command::new(git_exec_path + "/git-daemon")
         .args(&["--reuseaddr", "--base-path=.", "--export-all", "."])
-        .current_dir(dir)
+        .current_dir(dir.as_ref())
         .spawn()
         .expect("couldn't spawn Git server");
 
@@ -1106,13 +1108,13 @@ fn same_dep_diff_vsns() {
 // Then the nested dependencies are pulled to the correct locations with the
 //     correct contents
 fn nested_deps_pulled_correctly_with_long_flag() {
-    nested_deps_pulled_correctly(
+    check_nested_deps_pulled_correctly(
         "nested_deps_pulled_correctly_with_long_flag",
         "--recursive",
     )
 }
 
-fn nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
+fn check_nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
     let test_deps = test_deps();
     let TestSetup{dep_srcs_dir, proj_dir, ..} =
         create_test_setup(&root_test_dir_name, &test_deps, &hashmap!{});
@@ -1168,7 +1170,7 @@ fn nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
 // Then the nested dependencies are pulled to the correct locations with the
 //     correct contents
 fn nested_deps_pulled_correctly_with_short_flag() {
-    nested_deps_pulled_correctly(
+    check_nested_deps_pulled_correctly(
         "nested_deps_pulled_correctly_with_short_flag",
         "-r",
     )
@@ -1179,12 +1181,16 @@ fn nested_deps_pulled_correctly_with_short_flag() {
 // When the command is run without recursion
 // Then the nested dependencies are not pulled
 fn nested_deps_not_pulled_without_recursion() {
+    let test_name = "nested_deps_not_pulled_without_recursion";
+    check_nested_deps_not_pulled_without_recursion(test_name);
+}
+
+fn check_nested_deps_not_pulled_without_recursion(test_name: &str)
+    -> TestSetup
+{
     let test_deps = test_deps();
-    let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
-        "nested_deps_not_pulled_without_recursion",
-        &test_deps,
-        &hashmap!{},
-    );
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup(test_name, &test_deps, &hashmap!{});
     let deps_file_conts = indoc::indoc!{"
         deps
 
@@ -1194,7 +1200,7 @@ fn nested_deps_not_pulled_without_recursion() {
     fs::write(&deps_file, &deps_file_conts)
         .expect("couldn't write dependency file");
     let cmd_result = with_git_server(
-        dep_srcs_dir,
+        &dep_srcs_dir,
         || {
             let mut cmd = new_test_cmd(proj_dir.clone());
 
@@ -1213,6 +1219,61 @@ fn nested_deps_not_pulled_without_recursion() {
                     ".git" => Node::AnyDir,
                     "dpnd.txt" => Node::AnyFile,
                     "script.sh" => Node::File("echo 'hello, all!'"),
+                }),
+            }),
+        }),
+    );
+
+    TestSetup{
+        dep_srcs_dir,
+        proj_dir,
+        deps_commit_hashes,
+        deps_file_conts: deps_file_conts.to_string(),
+    }
+}
+
+#[test]
+// Given the dependency file contains nested dependencies and the command was
+//     run without recursion
+// When the command is run with recursion
+// Then the nested dependencies are pulled to the correct locations with the
+//     correct contents
+fn run_with_recursion_after_run_without_recursion() {
+    let test_name = "run_with_recursion_after_run_without_recursion";
+    let TestSetup{deps_file_conts, dep_srcs_dir, proj_dir, ..} =
+        check_nested_deps_not_pulled_without_recursion(test_name);
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "all_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::AnyFile,
+                    "script.sh" => Node::File("echo 'hello, all!'"),
+                    "deps" => Node::Dir(hashmap!{
+                        "current_dpnd.txt" => Node::AnyFile,
+                        "my_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "script.sh" => Node::File("echo 'hello, world!'"),
+                        }),
+                        "your_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "script.sh" => Node::File("echo 'hello, sun!'"),
+                        }),
+                    }),
                 }),
             }),
         }),
