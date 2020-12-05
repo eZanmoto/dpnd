@@ -1420,7 +1420,7 @@ fn empty_deps_file() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_utf8() {
-    let (_, mut cmd) = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_utf8",
         [0x00, 0x00, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00],
     );
@@ -1430,10 +1430,11 @@ fn deps_file_invalid_utf8() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "The dependency file contains an invalid UTF-8 sequence after \
-             byte 4\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt: This dependency file contains an invalid UTF-8 \
+             sequence after byte 4\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]

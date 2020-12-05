@@ -127,13 +127,13 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
     while let Some(proj) = projs.pop() {
         let (proj_dir, dep_name, deps_file_path, raw_deps_spec) = proj;
         let deps_spec = String::from_utf8(raw_deps_spec)
-            .context(ConvDepsFileUtf8Failed{})?;
+            .with_context(|| ConvDepsFileUtf8Failed{
+                dep_name: dep_name.clone(),
+                path: deps_file_path.clone(),
+            })?;
 
         let conf = parse_deps_conf(&installer, &deps_spec)
-            .with_context(|| ParseDepsConfFailed{
-                dep_name,
-                path: deps_file_path,
-            })?;
+            .context(ParseDepsConfFailed{dep_name, path: deps_file_path})?;
 
         install_proj_deps(&installer, &proj_dir, &conf)
             .context(InstallProjDepsFailed{})?;
@@ -189,7 +189,11 @@ where
 {
     GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
-    ConvDepsFileUtf8Failed{source: FromUtf8Error},
+    ConvDepsFileUtf8Failed{
+        source: FromUtf8Error,
+        path: PathBuf,
+        dep_name: Option<String>,
+    },
     ParseDepsConfFailed{
         source: ParseDepsConfError,
         path: PathBuf,
@@ -608,12 +612,23 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                  directory or parent directories",
                 deps_file_name,
             ),
-        InstallError::ConvDepsFileUtf8Failed{source} =>
-            eprintln!(
-                "The dependency file contains an invalid UTF-8 sequence after \
-                 byte {}",
-                source.utf8_error().valid_up_to(),
-            ),
+        InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} =>
+            if let Some(name) = dep_name {
+                eprintln!(
+                    "{}: This nested dependency file (for '{}') contains an \
+                     invalid UTF-8 sequence after byte {}",
+                    render_path(&path),
+                    source.utf8_error().valid_up_to(),
+                    name,
+                )
+            } else {
+                eprintln!(
+                    "{}: This dependency file contains an invalid UTF-8 \
+                     sequence after byte {}",
+                    render_path(&path),
+                    source.utf8_error().valid_up_to(),
+                )
+            },
         InstallError::ParseDepsConfFailed{source, path, dep_name} =>
             print_parse_deps_conf_error(source, &path, dep_name),
         InstallError::InstallProjDepsFailed{source} =>
