@@ -116,20 +116,24 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
     let cwd = env::current_dir()
         .context(GetCurrentDirFailed{})?;
 
-    let (proj_dir, raw_deps_spec) =
+    let (proj_dir, deps_file_path, raw_deps_spec) =
         match read_deps_file(cwd, &installer.deps_file_name) {
             Some(v) => v,
             None => return Err(InstallError::NoDepsFileFound),
         };
 
-    let mut proj_dirs = vec![(proj_dir, raw_deps_spec)];
+    let mut projs = vec![(proj_dir, None, deps_file_path, raw_deps_spec)];
 
-    while let Some((proj_dir, raw_deps_spec)) = proj_dirs.pop() {
+    while let Some(proj) = projs.pop() {
+        let (proj_dir, dep_name, deps_file_path, raw_deps_spec) = proj;
         let deps_spec = String::from_utf8(raw_deps_spec)
             .context(ConvDepsFileUtf8Failed{})?;
 
         let conf = parse_deps_conf(&installer, &deps_spec)
-            .context(ParseDepsConfFailed{})?;
+            .with_context(|| ParseDepsConfFailed{
+                dep_name,
+                path: deps_file_path,
+            })?;
 
         install_proj_deps(&installer, &proj_dir, &conf)
             .context(InstallProjDepsFailed{})?;
@@ -144,13 +148,18 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
                 dep_proj_path.join(&installer.deps_file_name);
             let maybe_raw_deps_spec = try_read(&dep_deps_file_path)
                 .with_context(|| ReadNestedDepsFileFailed{
-                    path: dep_deps_file_path,
+                    path: dep_deps_file_path.clone(),
                     dep_name,
                     dep_proj_path: dep_proj_path.clone(),
                 })?;
 
             if let Some(raw_deps_spec) = maybe_raw_deps_spec {
-                proj_dirs.push((dep_proj_path, raw_deps_spec));
+                projs.push((
+                    dep_proj_path,
+                    Some(dep_name.to_string()),
+                    dep_deps_file_path,
+                    raw_deps_spec,
+                ));
             }
         }
     }
@@ -181,7 +190,11 @@ where
     GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
     ConvDepsFileUtf8Failed{source: FromUtf8Error},
-    ParseDepsConfFailed{source: ParseDepsConfError},
+    ParseDepsConfFailed{
+        source: ParseDepsConfError,
+        path: PathBuf,
+        dep_name: Option<String>,
+    },
     InstallProjDepsFailed{source: InstallProjDepsError<E>},
     ReadNestedDepsFileFailed{
         source: IoError,
@@ -248,12 +261,13 @@ where
 // deepest of `start`s ancestor directories that contains a file named
 // `deps_file_name`.
 fn read_deps_file(start: PathBuf, deps_file_name: &str)
-    -> Option<(PathBuf, Vec<u8>)>
+    -> Option<(PathBuf, PathBuf, Vec<u8>)>
 {
     let mut dir = start;
     loop {
-        if let Ok(conts) = fs::read(dir.clone().join(deps_file_name)) {
-            return Some((dir, conts));
+        let deps_file_path = dir.clone().join(deps_file_name);
+        if let Ok(conts) = fs::read(&deps_file_path) {
+            return Some((dir, deps_file_path, conts));
         }
 
         if !dir.pop() {
@@ -600,8 +614,8 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                  byte {}",
                 source.utf8_error().valid_up_to(),
             ),
-        InstallError::ParseDepsConfFailed{source} =>
-            print_parse_deps_conf_error(source),
+        InstallError::ParseDepsConfFailed{source, path, dep_name} =>
+            print_parse_deps_conf_error(source, &path, dep_name),
         InstallError::InstallProjDepsFailed{source} =>
             print_install_proj_deps_error(source),
         InstallError::ReadNestedDepsFileFailed{
@@ -680,7 +694,7 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
             ),
         InstallDepsError::CreateDepOutputDirFailed{source, dep_name, path} =>
             eprintln!(
-                "Couldn't create {}, the output directory for the '{}' \
+                "Couldn't create '{}', the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
                 dep_name,
@@ -722,12 +736,27 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
     }
 }
 
-fn print_parse_deps_conf_error(err: ParseDepsConfError) {
+fn print_parse_deps_conf_error(
+    err: ParseDepsConfError,
+    dep_file_path: &PathBuf,
+    dep_name: Option<String>,
+) {
     match err {
         ParseDepsConfError::MissingOutputDir =>
-            eprintln!(
-                "The dependency file doesn't contain an output directory"
-            ),
+            if let Some(name) = dep_name {
+                eprintln!(
+                    "{}: This nested dependency file (for '{}') doesn't \
+                     contain an output directory",
+                    render_path(&dep_file_path),
+                    name,
+                )
+            } else {
+                eprintln!(
+                    "{}: This dependency file doesn't contain an output \
+                     directory",
+                    render_path(&dep_file_path),
+                )
+            },
         ParseDepsConfError::ParseDepsFailed{source} =>
             eprintln!("{}", render_parse_deps_error(source)),
     }

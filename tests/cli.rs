@@ -1385,14 +1385,14 @@ fn setup_test_with_deps_file<C: AsRef<[u8]>>(
     root_test_dir_name: &str,
     conts: C,
 )
-    -> AssertCommand
+    -> (String, AssertCommand)
 {
     let root_test_dir = create_root_test_dir(root_test_dir_name);
     let test_proj_dir = create_test_dir(root_test_dir, "proj");
     fs::write(format!("{}/dpnd.txt", test_proj_dir), conts)
         .expect("couldn't write dependency file");
 
-    new_test_cmd(test_proj_dir)
+    (test_proj_dir.clone(), new_test_cmd(test_proj_dir))
 }
 
 #[test]
@@ -1400,14 +1400,19 @@ fn setup_test_with_deps_file<C: AsRef<[u8]>>(
 // When the command is run
 // Then the command fails with an error
 fn empty_deps_file() {
-    let mut cmd = setup_test_with_deps_file("empty_deps_file", "");
+    let (test_proj_dir, mut cmd) =
+        setup_test_with_deps_file("empty_deps_file", "");
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("The dependency file doesn't contain an output directory\n");
+        .stderr(format!(
+            "{}/dpnd.txt: This dependency file doesn't contain an output \
+             directory\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1415,7 +1420,7 @@ fn empty_deps_file() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_utf8() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_utf8",
         [0x00, 0x00, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00],
     );
@@ -1436,7 +1441,7 @@ fn deps_file_invalid_utf8() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_dep() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_dep",
         indoc::indoc! {"
             target/deps
@@ -1461,7 +1466,7 @@ fn deps_file_invalid_dep() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_tool() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_tool",
         indoc::indoc! {"
             target/deps
@@ -1486,7 +1491,7 @@ fn deps_file_invalid_tool() {
 // When the command is run
 // Then the command fails with an error
 fn unavailable_git_proj_src() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "unavailable_git_proj_src",
         indoc::indoc! {"
             target/deps
@@ -1618,7 +1623,7 @@ fn dep_output_dir_is_file() {
 // When the command is run
 // Then the command fails with an error
 fn dup_dep_names() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "dup_dep_names",
         indoc::indoc! {"
             target/deps
@@ -1644,7 +1649,7 @@ fn dup_dep_names() {
 // When the command is run
 // Then the command fails with an error
 fn invalid_dep_name() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "invalid_dep_name",
         indoc::indoc! {"
             target/deps
@@ -1663,4 +1668,64 @@ fn invalid_dep_name() {
              position 11; dependency names can only contain numbers, letters, \
              hyphens, underscores and periods\n",
         );
+}
+
+#[test]
+// Given the dependency file of a nested dependency is empty
+// When the command is run with `--recursive`
+// Then the command fails with an error
+fn empty_deps_file_in_nested_dep() {
+    let mut test_deps = test_deps();
+    test_deps.insert(
+        "bad_dep",
+        vec![hashmap!{
+            "dpnd.txt" => "",
+            "script.sh" => "echo 'hello!'",
+        }],
+    );
+    let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
+        "empty_deps_file_in_nested_dep",
+        &test_deps,
+        &hashmap!{},
+    );
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        bad_dep git git://localhost/bad_dep.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt: This nested dependency file (for \
+            'bad_dep') doesn't contain an output directory\n",
+            proj_dir,
+        ));
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "bad_dep" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::File(""),
+                    "script.sh" => Node::File("echo 'hello!'"),
+                }),
+            }),
+        }),
+    );
 }
