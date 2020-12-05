@@ -1442,7 +1442,7 @@ fn deps_file_invalid_utf8() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_dep() {
-    let (_, mut cmd) = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_dep",
         indoc::indoc! {"
             target/deps
@@ -1456,10 +1456,11 @@ fn deps_file_invalid_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 3: Invalid dependency specification: 'proj tool source \
-             version extra'\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:3: Invalid dependency specification: 'proj tool \
+             source version extra'\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1676,27 +1677,12 @@ fn invalid_dep_name() {
 // When the command is run with `--recursive`
 // Then the command fails with an error
 fn empty_deps_file_in_nested_dep() {
-    let mut test_deps = test_deps();
-    test_deps.insert(
-        "bad_dep",
-        vec![hashmap!{
-            "dpnd.txt" => "",
-            "script.sh" => "echo 'hello!'",
-        }],
-    );
-    let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
-        "empty_deps_file_in_nested_dep",
-        &test_deps,
-        &hashmap!{},
-    );
-    let deps_file_conts = indoc::indoc!{"
-        deps
-
-        bad_dep git git://localhost/bad_dep.git master
-    "};
-    let deps_file = format!("{}/dpnd.txt", proj_dir);
-    fs::write(&deps_file, &deps_file_conts)
-        .expect("couldn't write dependency file");
+    let nested_deps_file_conts = "";
+    let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
+        create_nested_test_setup(
+            "empty_deps_file_in_nested_dep",
+            &nested_deps_file_conts,
+        );
     let cmd_result = with_git_server(
         dep_srcs_dir,
         || {
@@ -1715,6 +1701,57 @@ fn empty_deps_file_in_nested_dep() {
             'bad_dep') doesn't contain an output directory\n",
             proj_dir,
         ));
+    assert_nested_dep_contents(
+        &proj_dir,
+        &deps_file_conts,
+        &nested_deps_file_conts,
+    );
+}
+
+fn create_nested_test_setup(
+    root_test_dir_name: &str,
+    nested_deps_file_conts: &str,
+)
+    -> NestedTestSetup
+{
+    let mut test_deps = test_deps();
+    test_deps.insert(
+        "bad_dep",
+        vec![hashmap!{
+            "dpnd.txt" => nested_deps_file_conts,
+            "script.sh" => "echo 'bad!'",
+        }],
+    );
+    let TestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_test_setup(root_test_dir_name, &test_deps, &hashmap!{});
+
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        bad_dep git git://localhost/bad_dep.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+
+    NestedTestSetup{
+        dep_srcs_dir,
+        proj_dir,
+        deps_file_conts: deps_file_conts.to_string(),
+    }
+}
+
+struct NestedTestSetup {
+    dep_srcs_dir: String,
+    proj_dir: String,
+    deps_file_conts: String,
+}
+
+fn assert_nested_dep_contents(
+    proj_dir: &str,
+    deps_file_conts: &str,
+    nested_deps_file_conts: &str,
+) {
     assert_fs_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
@@ -1723,10 +1760,51 @@ fn empty_deps_file_in_nested_dep() {
                 "current_dpnd.txt" => Node::AnyFile,
                 "bad_dep" => Node::Dir(hashmap!{
                     ".git" => Node::AnyDir,
-                    "dpnd.txt" => Node::File(""),
-                    "script.sh" => Node::File("echo 'hello!'"),
+                    "dpnd.txt" => Node::File(&nested_deps_file_conts),
+                    "script.sh" => Node::File("echo 'bad!'"),
                 }),
             }),
         }),
+    );
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains an invalid
+//     dependency specification
+// When the command is run with `--recursive`
+// Then the command fails with an error
+fn deps_file_invalid_dep_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        target/deps
+
+        proj tool source version extra
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
+        create_nested_test_setup(
+            "deps_file_invalid_dep_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: Invalid dependency specification in \
+             nested dependency 'bad_dep': 'proj tool source version extra'\n",
+            proj_dir,
+        ));
+    assert_nested_dep_contents(
+        &proj_dir,
+        &deps_file_conts,
+        &nested_deps_file_conts,
     );
 }

@@ -670,7 +670,7 @@ fn print_install_proj_deps_error(err: InstallProjDepsError<GitCmdError>) {
                 "The state file ('{}') is invalid ({}), please remove this \
                  file and try again",
                 render_path(&path),
-                render_parse_deps_error(source),
+                render_parse_deps_error(source, &path, None),
             ),
         InstallProjDepsError::CreateMainOutputDirFailed{source, path} =>
             eprintln!(
@@ -753,7 +753,7 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
 
 fn print_parse_deps_conf_error(
     err: ParseDepsConfError,
-    dep_file_path: &PathBuf,
+    deps_file_path: &PathBuf,
     dep_name: Option<String>,
 ) {
     match err {
@@ -762,22 +762,29 @@ fn print_parse_deps_conf_error(
                 eprintln!(
                     "{}: This nested dependency file (for '{}') doesn't \
                      contain an output directory",
-                    render_path(&dep_file_path),
+                    render_path(&deps_file_path),
                     name,
                 )
             } else {
                 eprintln!(
                     "{}: This dependency file doesn't contain an output \
                      directory",
-                    render_path(&dep_file_path),
+                    render_path(&deps_file_path),
                 )
             },
         ParseDepsConfError::ParseDepsFailed{source} =>
-            eprintln!("{}", render_parse_deps_error(source)),
+            eprintln!(
+                "{}",
+                render_parse_deps_error(source, &deps_file_path, dep_name),
+            ),
     }
 }
 
-fn render_parse_deps_error(err: ParseDepsError) -> String {
+fn render_parse_deps_error(
+    err: ParseDepsError,
+    file_path: &PathBuf,
+    dep_name: Option<String>,
+) -> String {
     match err {
         ParseDepsError::DupDepName{ln_num, dep_name, orig_ln_num} => {
             format!(
@@ -816,11 +823,23 @@ fn render_parse_deps_error(err: ParseDepsError) -> String {
             )
         },
         ParseDepsError::InvalidDepSpec{ln_num, line} => {
-            format!(
-                "Line {}: Invalid dependency specification: '{}'",
-                ln_num,
-                line,
-            )
+            if let Some(name) = dep_name {
+                format!(
+                    "{}:{}: Invalid dependency specification in nested \
+                     dependency '{}': '{}'",
+                    render_path(&file_path),
+                    ln_num,
+                    name,
+                    line,
+                )
+            } else {
+                format!(
+                    "{}:{}: Invalid dependency specification: '{}'",
+                    render_path(&file_path),
+                    ln_num,
+                    line,
+                )
+            }
         },
         ParseDepsError::UnknownTool{ln_num, dep_name, tool_name} => {
             format!(
