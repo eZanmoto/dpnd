@@ -133,10 +133,13 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
             })?;
 
         let conf = parse_deps_conf(&installer, &deps_spec)
-            .context(ParseDepsConfFailed{dep_name, path: deps_file_path})?;
+            .with_context(|| ParseDepsConfFailed{
+                dep_name: dep_name.clone(),
+                path: deps_file_path.clone(),
+            })?;
 
         install_proj_deps(&installer, &proj_dir, &conf)
-            .context(InstallProjDepsFailed{})?;
+            .context(InstallProjDepsFailed{dep_name})?;
 
         if !recurse {
             break;
@@ -199,7 +202,10 @@ where
         path: PathBuf,
         dep_name: Option<String>,
     },
-    InstallProjDepsFailed{source: InstallProjDepsError<E>},
+    InstallProjDepsFailed{
+        source: InstallProjDepsError<E>,
+        dep_name: Option<String>,
+    },
     ReadNestedDepsFileFailed{
         source: IoError,
         path: PathBuf,
@@ -631,8 +637,15 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
             },
         InstallError::ParseDepsConfFailed{source, path, dep_name} =>
             print_parse_deps_conf_error(source, &path, dep_name),
-        InstallError::InstallProjDepsFailed{source} =>
-            print_install_proj_deps_error(source),
+        InstallError::InstallProjDepsFailed{source, dep_name} =>
+            print_install_proj_deps_error(
+                source,
+                if let Some(n) = dep_name {
+                    format!(" in the nested dependency '{}'", n)
+                } else {
+                    "".to_string()
+                },
+            ),
         InstallError::ReadNestedDepsFileFailed{
             source,
             path,
@@ -650,7 +663,10 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
     }
 }
 
-fn print_install_proj_deps_error(err: InstallProjDepsError<GitCmdError>) {
+fn print_install_proj_deps_error(
+    err: InstallProjDepsError<GitCmdError>,
+    dep_descr: String,
+) {
     match err {
         InstallProjDepsError::ReadStateFileFailed{source, path} =>
             eprintln!(
@@ -679,11 +695,14 @@ fn print_install_proj_deps_error(err: InstallProjDepsError<GitCmdError>) {
                 source,
             ),
         InstallProjDepsError::InstallDepsFailed{source} =>
-            print_install_deps_error(source),
+            print_install_deps_error(source, dep_descr),
     }
 }
 
-fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
+fn print_install_deps_error(
+    err: InstallDepsError<GitCmdError>,
+    dep_descr: String,
+) {
     match err {
         InstallDepsError::RemoveOldDepOutputDirFailed{
             source,
@@ -735,9 +754,10 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
             match source {
                 FetchError::RetrieveFailed{source} =>
                     eprintln!(
-                        "Couldn't retrieve the source for the '{}' \
-                         dependency: {}",
+                        "Couldn't retrieve the source for the dependency \
+                         '{}'{}: {}",
                         dep_name,
+                        dep_descr,
                         render_git_cmd_err(source),
                     ),
                 FetchError::VersionChangeFailed{source} =>

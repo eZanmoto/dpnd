@@ -1515,7 +1515,7 @@ fn unavailable_git_proj_src() {
         .code(1)
         .stdout("")
         .stderr(indoc::indoc!{"
-            Couldn't retrieve the source for the 'proj' dependency: `git \
+            Couldn't retrieve the source for the dependency 'proj': `git \
              clone git://localhost/my_scripts.git .` failed with the \
              following output:
 
@@ -1862,4 +1862,47 @@ fn deps_file_invalid_tool_in_nested_dep() {
         &deps_file_conts,
         &nested_deps_file_conts,
     );
+}
+
+#[test]
+// Given the dependency file of a nested dependency specifies a Git dependency
+//     that is unavailable
+// When the command is run
+// Then the command fails with an error
+fn unavailable_git_proj_src_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        proj git git://localhost/no_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "unavailable_git_proj_src_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(indoc::indoc!{"
+            Couldn't retrieve the source for the dependency 'proj' in the \
+             nested dependency 'bad_dep': `git clone \
+             git://localhost/no_scripts.git .` failed with the following \
+             output:
+
+            [!] Cloning into '.'...
+            [!] fatal: remote error: access denied or repository not \
+             exported: /no_scripts.git
+
+        "});
+    // TODO Assert the contents of the filesystem.
 }
