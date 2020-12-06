@@ -10,6 +10,7 @@ use std::fs;
 use std::panic;
 use std::panic::UnwindSafe;
 use std::process::Command;
+use std::process::Stdio;
 use std::string::ToString;
 
 #[macro_use]
@@ -287,9 +288,14 @@ where
 
     // We run `git-daemon` directly because `git daemon` spawns `git-daemon`
     // but we lose its PID in the process.
+    //
+    // TODO Store the output of the standard streams for debugging purposes.
     let mut daemon = Command::new(git_exec_path + "/git-daemon")
         .args(&["--reuseaddr", "--base-path=.", "--export-all", "."])
         .current_dir(dir.as_ref())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .spawn()
         .expect("couldn't spawn Git server");
 
