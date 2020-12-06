@@ -1444,7 +1444,7 @@ fn deps_file_invalid_utf8() {
 fn deps_file_invalid_dep() {
     let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_dep",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             proj tool source version extra
@@ -1470,7 +1470,7 @@ fn deps_file_invalid_dep() {
 fn deps_file_invalid_tool() {
     let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_tool",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             proj tool source version
@@ -1496,7 +1496,7 @@ fn deps_file_invalid_tool() {
 fn unavailable_git_proj_src() {
     let (_, mut cmd) = setup_test_with_deps_file(
         "unavailable_git_proj_src",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             proj git git://localhost/my_scripts.git master
@@ -1538,7 +1538,7 @@ fn unavailable_git_proj_vsn() {
         ],
     );
     let test_proj_dir = create_test_dir(root_test_dir.clone(), "proj");
-    let deps_file_conts = indoc::indoc! {"
+    let deps_file_conts = indoc::indoc!{"
         target/deps
 
         my_scripts git git://localhost/my_scripts.git bad_commit
@@ -1607,7 +1607,7 @@ fn dep_output_dir_is_file() {
     let test_proj_deps_dir = create_test_dir(test_proj_dir.clone(), "deps");
     fs::write(test_proj_deps_dir + "/my_scripts", "")
         .expect("couldn't write dummy target file");
-    let deps_file_conts = indoc::indoc! {"
+    let deps_file_conts = indoc::indoc!{"
         deps
 
         my_scripts git git://localhost/my_scripts.git master
@@ -1635,7 +1635,7 @@ fn dep_output_dir_is_file() {
 fn dup_dep_names() {
     let (_, mut cmd) = setup_test_with_deps_file(
         "dup_dep_names",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             my_scripts git git://localhost/my_scripts.git master
@@ -1661,7 +1661,7 @@ fn dup_dep_names() {
 fn invalid_dep_name() {
     let (_, mut cmd) = setup_test_with_deps_file(
         "invalid_dep_name",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             my_scripts? git git://localhost/my_scripts.git master
