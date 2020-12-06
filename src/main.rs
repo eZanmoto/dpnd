@@ -610,15 +610,17 @@ enum WriteStateFileError {
 
 fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
     match err {
-        InstallError::GetCurrentDirFailed{source} =>
-            eprintln!("Couldn't get the current directory: {}", source),
-        InstallError::NoDepsFileFound =>
+        InstallError::GetCurrentDirFailed{source} => {
+            eprintln!("Couldn't get the current directory: {}", source);
+        },
+        InstallError::NoDepsFileFound => {
             eprintln!(
                 "Couldn't find the dependency file '{}' in the current \
                  directory or parent directories",
                 deps_file_name,
-            ),
-        InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} =>
+            );
+        },
+        InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} => {
             if let Some(name) = dep_name {
                 eprintln!(
                     "{}: This nested dependency file (for '{}') contains an \
@@ -626,32 +628,34 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                     render_path(&path),
                     source.utf8_error().valid_up_to(),
                     name,
-                )
+                );
             } else {
                 eprintln!(
                     "{}: This dependency file contains an invalid UTF-8 \
                      sequence after byte {}",
                     render_path(&path),
                     source.utf8_error().valid_up_to(),
-                )
-            },
-        InstallError::ParseDepsConfFailed{source, path, dep_name} =>
-            print_parse_deps_conf_error(source, &path, dep_name),
-        InstallError::InstallProjDepsFailed{source, dep_name} =>
-            print_install_proj_deps_error(
-                source,
+                );
+            }
+        },
+        InstallError::ParseDepsConfFailed{source, path, dep_name} => {
+            print_parse_deps_conf_error(source, &path, dep_name);
+        },
+        InstallError::InstallProjDepsFailed{source, dep_name} => {
+            let dep_descr =
                 if let Some(n) = dep_name {
                     format!(" in the nested dependency '{}'", n)
                 } else {
                     "".to_string()
-                },
-            ),
+                };
+            print_install_proj_deps_error(source, &dep_descr);
+        },
         InstallError::ReadNestedDepsFileFailed{
             source,
             path,
             dep_name,
             dep_proj_path,
-        } =>
+        } => {
             eprintln!(
                 "Couldn't read the dependency file ('{}') for the nested \
                  dependency '{}' ('{}'): {}",
@@ -659,13 +663,14 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                 dep_name,
                 render_path(&dep_proj_path),
                 source,
-            ),
+            );
+        },
     }
 }
 
 fn print_install_proj_deps_error(
     err: InstallProjDepsError<GitCmdError>,
-    dep_descr: String,
+    dep_descr: &str,
 ) {
     match err {
         InstallProjDepsError::ReadStateFileFailed{source, path} =>
@@ -695,13 +700,13 @@ fn print_install_proj_deps_error(
                 source,
             ),
         InstallProjDepsError::InstallDepsFailed{source} =>
-            print_install_deps_error(source, dep_descr),
+            print_install_deps_error(source, &dep_descr),
     }
 }
 
 fn print_install_deps_error(
     err: InstallDepsError<GitCmdError>,
-    dep_descr: String,
+    dep_descr: &str,
 ) {
     match err {
         InstallDepsError::RemoveOldDepOutputDirFailed{
