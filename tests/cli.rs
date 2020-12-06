@@ -1853,8 +1853,8 @@ fn deps_file_invalid_tool_in_nested_dep() {
         .stdout("")
         .stderr(format!(
             "{}/deps/bad_dep/dpnd.txt:3: The dependency 'proj' of the nested \
-            dependency 'bad_dep' specifies an invalid tool name ('tool'); the \
-            supported tool is 'git'\n",
+             dependency 'bad_dep' specifies an invalid tool name ('tool'); \
+             the supported tool is 'git'\n",
             proj_dir,
         ));
     assert_nested_dep_contents(
