@@ -783,7 +783,7 @@ fn print_parse_deps_conf_error(
 fn render_parse_deps_error(
     err: ParseDepsError,
     file_path: &PathBuf,
-    dep_name: Option<String>,
+    proj_name: Option<String>,
 ) -> String {
     match err {
         ParseDepsError::DupDepName{ln_num, dep_name, orig_ln_num} => {
@@ -823,7 +823,7 @@ fn render_parse_deps_error(
             )
         },
         ParseDepsError::InvalidDepSpec{ln_num, line} => {
-            if let Some(name) = dep_name {
+            if let Some(name) = proj_name {
                 format!(
                     "{}:{}: Invalid dependency specification in nested \
                      dependency '{}': '{}'",
@@ -842,13 +842,27 @@ fn render_parse_deps_error(
             }
         },
         ParseDepsError::UnknownTool{ln_num, dep_name, tool_name} => {
-            format!(
-                "Line {}: The '{}' dependency specifies an invalid tool name \
-                 ('{}'); the supported tool is 'git'",
-                ln_num,
-                dep_name,
-                tool_name,
-            )
+            if let Some(name) = proj_name {
+                format!(
+                    "{}:{}: The dependency '{}' of the nested dependency '{}' \
+                     specifies an invalid tool name ('{}'); the supported \
+                     tool is 'git'",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    name,
+                    tool_name,
+                )
+            } else {
+                format!(
+                    "{}:{}: The dependency '{}' specifies an invalid tool \
+                     name ('{}'); the supported tool is 'git'",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    tool_name,
+                )
+            }
         },
     }
 }

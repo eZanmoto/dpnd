@@ -1468,7 +1468,7 @@ fn deps_file_invalid_dep() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_tool() {
-    let (_, mut cmd) = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_tool",
         indoc::indoc! {"
             target/deps
@@ -1482,10 +1482,11 @@ fn deps_file_invalid_tool() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 3: The 'proj' dependency specifies an invalid tool name \
-             ('tool'); the supported tool is 'git'\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:3: The dependency 'proj' specifies an invalid tool \
+             name ('tool'); the supported tool is 'git'\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1800,6 +1801,47 @@ fn deps_file_invalid_dep_in_nested_dep() {
         .stderr(format!(
             "{}/deps/bad_dep/dpnd.txt:3: Invalid dependency specification in \
              nested dependency 'bad_dep': 'proj tool source version extra'\n",
+            proj_dir,
+        ));
+    assert_nested_dep_contents(
+        &proj_dir,
+        &deps_file_conts,
+        &nested_deps_file_conts,
+    );
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains an unknown tool
+// When the command is run with `--recursive`
+// Then the command fails with an error
+fn deps_file_invalid_tool_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        target/deps
+
+        proj tool source version
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
+        create_nested_test_setup(
+            "deps_file_invalid_tool_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: The dependency 'proj' of the nested \
+            dependency 'bad_dep' specifies an invalid tool name ('tool'); the \
+            supported tool is 'git'\n",
             proj_dir,
         ));
     assert_nested_dep_contents(
