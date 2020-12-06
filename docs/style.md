@@ -29,9 +29,6 @@ Rules
 
 This project uses a maximum line length of 79 for Rust files.
 
-This rule is relaxed for strings in test files, which may go beyond 79
-characters.
-
 ##### Rationale
 
 Rust code tends to be relatively terse due to its explicit nature which means

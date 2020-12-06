@@ -1509,7 +1509,9 @@ fn unavailable_git_proj_src() {
         .code(1)
         .stdout("")
         .stderr(indoc::indoc!{"
-            Couldn't retrieve the source for the 'proj' dependency: `git clone git://localhost/my_scripts.git .` failed with the following output:
+            Couldn't retrieve the source for the 'proj' dependency: `git \
+             clone git://localhost/my_scripts.git .` failed with the \
+             following output:
 
             [!] Cloning into '.'...
             [!] fatal: unable to connect to localhost:
@@ -1544,7 +1546,10 @@ fn unavailable_git_proj_vsn() {
     let cmd_result = with_git_server(
         root_test_dir,
         || {
-            fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
+            fs::write(
+                test_proj_dir.to_string() + "/dpnd.txt",
+                &deps_file_conts,
+            )
                 .expect("couldn't write dependency file");
             let mut cmd = new_test_cmd(test_proj_dir.clone());
 
@@ -1556,9 +1561,11 @@ fn unavailable_git_proj_vsn() {
         .code(1)
         .stdout("")
         .stderr(indoc::indoc!{"
-            Couldn't change the version for the 'my_scripts' dependency: `git checkout bad_commit` failed with the following output:
+            Couldn't change the version for the 'my_scripts' dependency: `git \
+             checkout bad_commit` failed with the following output:
 
-            [!] error: pathspec 'bad_commit' did not match any file(s) known to git.
+            [!] error: pathspec 'bad_commit' did not match any file(s) known \
+             to git.
 
         "});
 }
