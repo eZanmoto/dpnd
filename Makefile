@@ -31,7 +31,7 @@ check_lint:
 			-D clippy::pedantic \
 			-D clippy::cargo
 	python3 scripts/check_line_length.py \
-		'src/**.rs' \
+		'**/*.rs' \
 		79
 
 # We tag `$(tgt_test_dir)` as phony so that the test directory is removed and
