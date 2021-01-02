@@ -1982,3 +1982,39 @@ fn invalid_dep_name_in_nested_dep() {
             proj_dir,
         ));
 }
+
+#[test]
+// Given the dependency file of a nested dependency contains a dependency with
+//     a reserved name
+// When the command is run
+// Then the command fails with an error
+fn reserved_dep_name_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        current_dpnd.txt git git://localhost/my_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "reserved_dep_name_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: 'current_dpnd.txt' is a reserved \
+             name and can't be used as a dependency name\n",
+            proj_dir,
+        ));
+}

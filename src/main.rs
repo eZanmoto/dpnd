@@ -835,8 +835,9 @@ fn render_parse_deps_error(
         },
         ParseDepsError::ReservedDepName{ln_num, dep_name} => {
             format!(
-                "Line {}: '{}' is a reserved name and can't be used as a \
+                "{}:{}: '{}' is a reserved name and can't be used as a \
                  dependency name",
+                render_path(&file_path),
                 ln_num,
                 dep_name,
             )
