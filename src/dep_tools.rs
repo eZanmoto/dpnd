@@ -3,6 +3,9 @@
 // licence that can be found in the LICENCE file.
 
 use std::error::Error;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::fmt::Result as FmtResult;
 use std::io::Error as IoError;
 use std::path::PathBuf;
 use std::process::Command;
@@ -23,9 +26,18 @@ where
     fn fetch(
         &self,
         source: String,
-        version: String,
+        version: Version,
         out_dir: &PathBuf,
     ) -> Result<(), FetchError<E>>;
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Version(pub String);
+
+impl Display for Version {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Debug, Snafu)]
@@ -45,7 +57,7 @@ impl DepTool<GitCmdError> for Git {
         "git".to_string()
     }
 
-    fn fetch(&self, src: String, vsn: String, out_dir: &PathBuf)
+    fn fetch(&self, src: String, Version(vsn): Version, out_dir: &PathBuf)
         -> Result<(), FetchError<GitCmdError>>
     {
         let gits_args = vec![

@@ -11,6 +11,7 @@ use std::io::Error as IoError;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::iter::Enumerate;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::str;
@@ -23,61 +24,203 @@ use dep_tools::DepTool;
 use dep_tools::FetchError;
 use dep_tools::Git;
 use dep_tools::GitCmdError;
+use dep_tools::Version;
 
+extern crate clap;
 extern crate regex;
 extern crate snafu;
 
+use clap::App;
+use clap::AppSettings;
+use clap::Arg;
+use clap::SubCommand;
 use regex::Regex;
 use snafu::ResultExt;
 use snafu::Snafu;
 
 fn main() {
     let deps_file_name = "dpnd.txt";
-    let state_file_name = format!("current_{}", deps_file_name);
-    let bad_dep_name_chars = Regex::new(r"[^a-zA-Z0-9._-]").unwrap();
 
-    let install_result = install(
-        &deps_file_name,
-        &state_file_name,
-        &bad_dep_name_chars,
+    let install_about: &str = &format!(
+        "Install dependencies defined in '{}'",
+        deps_file_name,
     );
-    if let Err(err) = install_result {
-        print_install_error(err, deps_file_name);
-        process::exit(1);
+    let install_recursive_flag = "recursive";
+
+    let args =
+        App::new("dpnd")
+            .version(env!("CARGO_PKG_VERSION"))
+            .author(env!("CARGO_PKG_AUTHORS"))
+            .about(env!("CARGO_PKG_DESCRIPTION"))
+            .settings(&[
+                AppSettings::SubcommandRequiredElseHelp,
+                AppSettings::VersionlessSubcommands,
+            ])
+            .subcommands(vec![
+                SubCommand::with_name("install")
+                    .about(install_about)
+                    .args(&[
+                        Arg::with_name(install_recursive_flag)
+                            .short("r")
+                            .long("recursive")
+                            .help(
+                                "Install dependencies found in dependencies",
+                            ),
+                    ]),
+            ])
+            .get_matches();
+
+    match args.subcommand() {
+        ("install", Some(sub_args)) => {
+            let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> =
+                HashMap::new();
+            tools.insert("git".to_string(), &Git{});
+
+            let bad_dep_name_chars = Regex::new(r"[^a-zA-Z0-9._-]").unwrap();
+            let install_result = install(
+                &Installer{
+                    deps_file_name: deps_file_name.to_string(),
+                    state_file_name: format!("current_{}", deps_file_name),
+                    bad_dep_name_chars,
+                    tools,
+                },
+                sub_args.is_present(install_recursive_flag),
+            );
+            if let Err(err) = install_result {
+                print_install_error(err, &deps_file_name);
+                process::exit(1);
+            }
+        },
+        (arg_name, sub_args) => {
+            // All subcommands defined in `args_defn` should be handled here,
+            // so matching an unhandled command shouldn't happen.
+            panic!(
+                "unexpected command '{}' (arguments: '{:?}')",
+                arg_name,
+                sub_args,
+            );
+        },
     }
 }
 
-fn install(
-    deps_file_name: &str,
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-)
+struct Installer<'a, E> {
+    deps_file_name: String,
+    state_file_name: String,
+    bad_dep_name_chars: Regex,
+    tools: HashMap<String, &'a (dyn DepTool<E> + 'a)>,
+}
+
+fn install(installer: &Installer<GitCmdError>, recurse: bool)
     -> Result<(), InstallError<GitCmdError>>
 {
     let cwd = env::current_dir()
         .context(GetCurrentDirFailed{})?;
 
-    let (deps_dir, deps_spec) = match read_deps_file(cwd, &deps_file_name) {
-        Some(v) => v,
-        None => return Err(InstallError::NoDepsFileFound),
-    };
+    let (proj_dir, deps_file_path, raw_deps_spec) =
+        match read_deps_file(cwd, &installer.deps_file_name) {
+            Some(v) => v,
+            None => return Err(InstallError::NoDepsFileFound),
+        };
 
-    let deps_spec = String::from_utf8(deps_spec)
-        .context(ConvDepsFileUtf8Failed{})?;
+    let mut projs = vec![(proj_dir, None, deps_file_path, raw_deps_spec)];
 
-    let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> = HashMap::new();
-    tools.insert("git".to_string(), &Git{});
+    while let Some(proj) = projs.pop() {
+        let (proj_dir, dep_name, deps_file_path, raw_deps_spec) = proj;
+        let deps_spec = String::from_utf8(raw_deps_spec)
+            .with_context(|| ConvDepsFileUtf8Failed{
+                dep_name: dep_name.clone(),
+                path: deps_file_path.clone(),
+            })?;
 
-    let conf = parse_deps_conf(
-        &deps_spec,
-        state_file_name,
-        bad_dep_name_chars,
-        &tools,
-    )
-        .context(ParseDepsConfFailed{})?;
+        let conf = parse_deps_conf(&installer, &deps_spec)
+            .with_context(|| ParseDepsConfFailed{
+                dep_name: dep_name.clone(),
+                path: deps_file_path.clone(),
+            })?;
 
-    let output_dir = deps_dir.join(conf.output_dir);
-    let state_file_path = output_dir.join(state_file_name);
+        install_proj_deps(&installer, &proj_dir, &conf)
+            .context(InstallProjDepsFailed{dep_name})?;
+
+        if !recurse {
+            break;
+        }
+
+        for dep_name in conf.deps.keys() {
+            let dep_proj_path = proj_dir.join(&conf.output_dir).join(dep_name);
+            let dep_deps_file_path =
+                dep_proj_path.join(&installer.deps_file_name);
+            let maybe_raw_deps_spec = try_read(&dep_deps_file_path)
+                .with_context(|| ReadNestedDepsFileFailed{
+                    path: dep_deps_file_path.clone(),
+                    dep_name,
+                    dep_proj_path: dep_proj_path.clone(),
+                })?;
+
+            if let Some(raw_deps_spec) = maybe_raw_deps_spec {
+                projs.push((
+                    dep_proj_path,
+                    Some(dep_name.to_string()),
+                    dep_deps_file_path,
+                    raw_deps_spec,
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn try_read<P: AsRef<Path>>(path: P) -> Result<Option<Vec<u8>>, IoError> {
+    match fs::read(path) {
+        Ok(conts) => {
+            Ok(Some(conts))
+        },
+        Err(err) => {
+            if err.kind() == ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(err)
+            }
+        },
+    }
+}
+
+#[derive(Debug, Snafu)]
+enum InstallError<E>
+where
+    E: Error + 'static
+{
+    GetCurrentDirFailed{source: IoError},
+    NoDepsFileFound,
+    ConvDepsFileUtf8Failed{
+        source: FromUtf8Error,
+        path: PathBuf,
+        dep_name: Option<String>,
+    },
+    ParseDepsConfFailed{
+        source: ParseDepsConfError,
+        path: PathBuf,
+        dep_name: Option<String>,
+    },
+    InstallProjDepsFailed{
+        source: InstallProjDepsError<E>,
+        dep_name: Option<String>,
+    },
+    ReadNestedDepsFileFailed{
+        source: IoError,
+        path: PathBuf,
+        dep_name: String,
+        dep_proj_path: PathBuf,
+    },
+}
+
+fn install_proj_deps<'a>(
+    installer: &Installer<'a, GitCmdError>,
+    proj_dir: &PathBuf,
+    conf: &DepsConf<'a, GitCmdError>,
+) -> Result<(), InstallProjDepsError<GitCmdError>> {
+    let output_dir = proj_dir.join(&conf.output_dir);
+    let state_file_path = output_dir.join(&installer.state_file_name);
     let state_file_conts = match fs::read(&state_file_path) {
         Ok(conts) => {
             conts
@@ -86,7 +229,7 @@ fn install(
             if err.kind() == ErrorKind::NotFound {
                 vec![]
             } else {
-                return Err(InstallError::ReadStateFileFailed{
+                return Err(InstallProjDepsError::ReadStateFileFailed{
                     source: err,
                     path: state_file_path,
                 });
@@ -99,33 +242,24 @@ fn install(
             || ConvStateFileUtf8Failed{path: state_file_path.clone()}
         )?;
 
-    let cur_deps = parse_deps(
-        &mut state_spec.lines().enumerate(),
-        state_file_name,
-        bad_dep_name_chars,
-        &tools,
-    )
+    let cur_deps = parse_deps(&installer, &mut state_spec.lines().enumerate())
         .with_context(|| ParseStateFileFailed{path: state_file_path.clone()})?;
 
     fs::create_dir_all(&output_dir)
         .with_context(|| CreateMainOutputDirFailed{path: output_dir.clone()})?;
 
-    let state_file_path = output_dir.join(state_file_name);
-    install_deps(&output_dir, state_file_path, cur_deps, conf.deps)
+    install_deps(&output_dir, state_file_path, cur_deps, conf.deps.clone())
         .context(InstallDepsFailed{})?;
 
     Ok(())
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Snafu)]
-enum InstallError<E>
+enum InstallProjDepsError<E>
 where
     E: Error + 'static
 {
-    GetCurrentDirFailed{source: IoError},
-    NoDepsFileFound,
-    ConvDepsFileUtf8Failed{source: FromUtf8Error},
-    ParseDepsConfFailed{source: ParseDepsConfError},
     ReadStateFileFailed{source: IoError, path: PathBuf},
     ConvStateFileUtf8Failed{source: FromUtf8Error, path: PathBuf},
     ParseStateFileFailed{source: ParseDepsError, path: PathBuf},
@@ -137,12 +271,13 @@ where
 // deepest of `start`s ancestor directories that contains a file named
 // `deps_file_name`.
 fn read_deps_file(start: PathBuf, deps_file_name: &str)
-    -> Option<(PathBuf, Vec<u8>)>
+    -> Option<(PathBuf, PathBuf, Vec<u8>)>
 {
     let mut dir = start;
     loop {
-        if let Ok(conts) = fs::read(dir.clone().join(deps_file_name)) {
-            return Some((dir, conts));
+        let deps_file_path = dir.clone().join(deps_file_name);
+        if let Ok(conts) = fs::read(&deps_file_path) {
+            return Some((dir, deps_file_path, conts));
         }
 
         if !dir.pop() {
@@ -151,12 +286,7 @@ fn read_deps_file(start: PathBuf, deps_file_name: &str)
     }
 }
 
-fn parse_deps_conf<'a>(
-    conts: &str,
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
-)
+fn parse_deps_conf<'a>(installer: &Installer<'a, GitCmdError>, conts: &str)
     -> Result<DepsConf<'a, GitCmdError>, ParseDepsConfError>
 {
     let mut lines = conts.lines().enumerate();
@@ -164,12 +294,7 @@ fn parse_deps_conf<'a>(
     if let Some(output_dir) = parse_output_dir(&mut lines) {
         Ok(DepsConf {
             output_dir,
-            deps: parse_deps(
-                &mut lines,
-                state_file_name,
-                bad_dep_name_chars,
-                &tools,
-            )
+            deps: parse_deps(&installer, &mut lines)
                 .context(ParseDepsFailed{})?,
         })
     } else {
@@ -208,10 +333,8 @@ fn conf_line_is_skippable(ln: &str) -> bool {
 }
 
 fn parse_deps<'a>(
+    installer: &Installer<'a, GitCmdError>,
     lines: &mut Enumerate<Lines>,
-    state_file_name: &str,
-    bad_dep_name_chars: &Regex,
-    tools: &HashMap<String, &'a (dyn DepTool<GitCmdError> + 'a)>,
 )
     -> Result<HashMap<String, Dependency<'a, GitCmdError>>, ParseDepsError>
 {
@@ -235,13 +358,13 @@ fn parse_deps<'a>(
         }
 
         let local_name = words[0].to_string();
-        if let Some(found) = bad_dep_name_chars.find(&local_name) {
+        if let Some(found) = installer.bad_dep_name_chars.find(&local_name) {
             return Err(ParseDepsError::DepNameContainsInvalidChar{
                 ln_num,
                 dep_name: local_name.clone(),
                 bad_char_idx: found.start(),
             });
-        } else if local_name == state_file_name {
+        } else if local_name == installer.state_file_name {
             return Err(ParseDepsError::ReservedDepName{
                 ln_num,
                 dep_name: local_name.clone(),
@@ -259,7 +382,7 @@ fn parse_deps<'a>(
         }
 
         let tool_name = words[1].to_string();
-        let tool = match tools.get(&tool_name) {
+        let tool = match installer.tools.get(&tool_name) {
             Some(tool) => *tool,
             None => return Err(ParseDepsError::UnknownTool{
                 ln_num,
@@ -273,7 +396,7 @@ fn parse_deps<'a>(
             Dependency{
                 tool,
                 source: words[2].to_string(),
-                version: words[3].to_string(),
+                version: Version(words[3].to_string()),
             },
             ln_num,
         ));
@@ -292,7 +415,17 @@ fn parse_deps<'a>(
 struct Dependency<'a, E> {
     tool: &'a (dyn DepTool<E> + 'a),
     source: String,
-    version: String,
+    version: Version,
+}
+
+impl<'a, E> Clone for Dependency<'a, E> {
+    fn clone(&self) -> Self {
+        Dependency{
+            tool: self.tool,
+            source: self.source.clone(),
+            version: self.version.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Snafu)]
@@ -343,8 +476,7 @@ fn install_deps<'a>(
 
         let new_dep = new_deps.remove(&dep_name)
             .unwrap_or_else(|| panic!(
-                "dependency '{}' wasn't in the map of current \
-                 dependencies",
+                "dependency '{}' wasn't in the map of current dependencies",
                 dep_name,
             ));
 
@@ -356,8 +488,8 @@ fn install_deps<'a>(
             })?;
 
         new_dep.tool.fetch(
-            (&new_dep.source).to_string(),
-            (&new_dep.version).to_string(),
+            new_dep.source.clone(),
+            new_dep.version.clone(),
             &dir,
         )
             .context(FetchFailed{dep_name: dep_name.clone()})?;
@@ -478,54 +610,104 @@ enum WriteStateFileError {
 
 fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
     match err {
-        InstallError::GetCurrentDirFailed{source} =>
-            eprintln!("Couldn't get the current directory: {}", source),
-        InstallError::NoDepsFileFound =>
+        InstallError::GetCurrentDirFailed{source} => {
+            eprintln!("Couldn't get the current directory: {}", source);
+        },
+        InstallError::NoDepsFileFound => {
             eprintln!(
                 "Couldn't find the dependency file '{}' in the current \
                  directory or parent directories",
                 deps_file_name,
-            ),
-        InstallError::ConvDepsFileUtf8Failed{source} =>
+            );
+        },
+        InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} => {
+            if let Some(name) = dep_name {
+                eprintln!(
+                    "{}: This nested dependency file (for '{}') contains an \
+                     invalid UTF-8 sequence after byte {}",
+                    render_path(&path),
+                    source.utf8_error().valid_up_to(),
+                    name,
+                );
+            } else {
+                eprintln!(
+                    "{}: This dependency file contains an invalid UTF-8 \
+                     sequence after byte {}",
+                    render_path(&path),
+                    source.utf8_error().valid_up_to(),
+                );
+            }
+        },
+        InstallError::ParseDepsConfFailed{source, path, dep_name} => {
+            print_parse_deps_conf_error(source, &path, dep_name);
+        },
+        InstallError::InstallProjDepsFailed{source, dep_name} => {
+            let dep_descr =
+                if let Some(n) = dep_name {
+                    format!(" in the nested dependency '{}'", n)
+                } else {
+                    "".to_string()
+                };
+            print_install_proj_deps_error(source, &dep_descr);
+        },
+        InstallError::ReadNestedDepsFileFailed{
+            source,
+            path,
+            dep_name,
+            dep_proj_path,
+        } => {
             eprintln!(
-                "The dependency file contains an invalid UTF-8 sequence after \
-                 byte {}",
-                source.utf8_error().valid_up_to(),
-            ),
-        InstallError::ParseDepsConfFailed{source} =>
-            print_parse_deps_conf_error(source),
-        InstallError::ReadStateFileFailed{source, path} =>
+                "Couldn't read the dependency file ('{}') for the nested \
+                 dependency '{}' ('{}'): {}",
+                render_path(&path),
+                dep_name,
+                render_path(&dep_proj_path),
+                source,
+            );
+        },
+    }
+}
+
+fn print_install_proj_deps_error(
+    err: InstallProjDepsError<GitCmdError>,
+    dep_descr: &str,
+) {
+    match err {
+        InstallProjDepsError::ReadStateFileFailed{source, path} =>
             eprintln!(
                 "Couldn't read the state file ('{}'): {}",
                 render_path(&path),
                 source,
             ),
-        InstallError::ConvStateFileUtf8Failed{source, path} =>
+        InstallProjDepsError::ConvStateFileUtf8Failed{source, path} =>
             eprintln!(
                 "The state file ('{}') contains an invalid UTF-8 sequence \
                  after byte {}",
                 render_path(&path),
                 source.utf8_error().valid_up_to(),
             ),
-        InstallError::ParseStateFileFailed{source, path} =>
+        InstallProjDepsError::ParseStateFileFailed{source, path} =>
             eprintln!(
                 "The state file ('{}') is invalid ({}), please remove this \
                  file and try again",
                 render_path(&path),
-                render_parse_deps_error(source),
+                render_parse_deps_error(source, &path, None),
             ),
-        InstallError::CreateMainOutputDirFailed{source, path} =>
+        InstallProjDepsError::CreateMainOutputDirFailed{source, path} =>
             eprintln!(
                 "Couldn't create {}, the main output directory: {}",
                 render_path(&path),
                 source,
             ),
-        InstallError::InstallDepsFailed{source} =>
-            print_install_deps_error(source),
+        InstallProjDepsError::InstallDepsFailed{source} =>
+            print_install_deps_error(source, &dep_descr),
     }
 }
 
-fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
+fn print_install_deps_error(
+    err: InstallDepsError<GitCmdError>,
+    dep_descr: &str,
+) {
     match err {
         InstallDepsError::RemoveOldDepOutputDirFailed{
             source,
@@ -551,7 +733,7 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
             ),
         InstallDepsError::CreateDepOutputDirFailed{source, dep_name, path} =>
             eprintln!(
-                "Couldn't create {}, the output directory for the '{}' \
+                "Couldn't create '{}', the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
                 dep_name,
@@ -577,9 +759,10 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
             match source {
                 FetchError::RetrieveFailed{source} =>
                     eprintln!(
-                        "Couldn't retrieve the source for the '{}' \
-                         dependency: {}",
+                        "Couldn't retrieve the source for the dependency \
+                         '{}'{}: {}",
                         dep_name,
+                        dep_descr,
                         render_git_cmd_err(source),
                     ),
                 FetchError::VersionChangeFailed{source} =>
@@ -593,32 +776,68 @@ fn print_install_deps_error(err: InstallDepsError<GitCmdError>) {
     }
 }
 
-fn print_parse_deps_conf_error(err: ParseDepsConfError) {
+fn print_parse_deps_conf_error(
+    err: ParseDepsConfError,
+    deps_file_path: &PathBuf,
+    dep_name: Option<String>,
+) {
     match err {
         ParseDepsConfError::MissingOutputDir =>
-            eprintln!(
-                "The dependency file doesn't contain an output directory"
-            ),
+            if let Some(name) = dep_name {
+                eprintln!(
+                    "{}: This nested dependency file (for '{}') doesn't \
+                     contain an output directory",
+                    render_path(&deps_file_path),
+                    name,
+                )
+            } else {
+                eprintln!(
+                    "{}: This dependency file doesn't contain an output \
+                     directory",
+                    render_path(&deps_file_path),
+                )
+            },
         ParseDepsConfError::ParseDepsFailed{source} =>
-            eprintln!("{}", render_parse_deps_error(source)),
+            eprintln!(
+                "{}",
+                render_parse_deps_error(source, &deps_file_path, dep_name),
+            ),
     }
 }
 
-fn render_parse_deps_error(err: ParseDepsError) -> String {
+fn render_parse_deps_error(
+    err: ParseDepsError,
+    file_path: &PathBuf,
+    proj_name: Option<String>,
+) -> String {
     match err {
         ParseDepsError::DupDepName{ln_num, dep_name, orig_ln_num} => {
-            format!(
-                "Line {}: A dependency named '{}' is already defined on line \
-                 {}",
-                ln_num,
-                dep_name,
-                orig_ln_num,
-            )
+            if let Some(name) = proj_name {
+                format!(
+                    "{}:{}: A dependency named '{}' is already defined on \
+                     line {} in the nested dependency '{}'",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    orig_ln_num,
+                    name,
+                )
+            } else {
+                format!(
+                    "{}:{}: A dependency named '{}' is already defined on \
+                     line {}",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    orig_ln_num,
+                )
+            }
         },
         ParseDepsError::ReservedDepName{ln_num, dep_name} => {
             format!(
-                "Line {}: '{}' is a reserved name and can't be used as a \
+                "{}:{}: '{}' is a reserved name and can't be used as a \
                  dependency name",
+                render_path(&file_path),
                 ln_num,
                 dep_name,
             )
@@ -633,9 +852,10 @@ fn render_parse_deps_error(err: ParseDepsError) -> String {
                 bad_char = format!(" ('{}')", chr);
             }
             format!(
-                "Line {}: '{}' contains an invalid character{} at position \
-                 {}; dependency names can only contain numbers, letters, \
-                 hyphens, underscores and periods",
+                "{}:{}: '{}' contains an invalid character{} at position {}; \
+                 dependency names can only contain numbers, letters, hyphens, \
+                 underscores and periods",
+                render_path(&file_path),
                 ln_num,
                 dep_name,
                 bad_char,
@@ -643,20 +863,46 @@ fn render_parse_deps_error(err: ParseDepsError) -> String {
             )
         },
         ParseDepsError::InvalidDepSpec{ln_num, line} => {
-            format!(
-                "Line {}: Invalid dependency specification: '{}'",
-                ln_num,
-                line,
-            )
+            if let Some(name) = proj_name {
+                format!(
+                    "{}:{}: Invalid dependency specification in nested \
+                     dependency '{}': '{}'",
+                    render_path(&file_path),
+                    ln_num,
+                    name,
+                    line,
+                )
+            } else {
+                format!(
+                    "{}:{}: Invalid dependency specification: '{}'",
+                    render_path(&file_path),
+                    ln_num,
+                    line,
+                )
+            }
         },
         ParseDepsError::UnknownTool{ln_num, dep_name, tool_name} => {
-            format!(
-                "Line {}: The '{}' dependency specifies an invalid tool name \
-                 ('{}'); the supported tool is 'git'",
-                ln_num,
-                dep_name,
-                tool_name,
-            )
+            if let Some(name) = proj_name {
+                format!(
+                    "{}:{}: The dependency '{}' of the nested dependency '{}' \
+                     specifies an invalid tool name ('{}'); the supported \
+                     tool is 'git'",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    name,
+                    tool_name,
+                )
+            } else {
+                format!(
+                    "{}:{}: The dependency '{}' specifies an invalid tool \
+                     name ('{}'); the supported tool is 'git'",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    tool_name,
+                )
+            }
         },
     }
 }

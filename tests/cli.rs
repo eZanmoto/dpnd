@@ -2,6 +2,7 @@
 // Use of this source code is governed by an MIT
 // licence that can be found in the LICENCE file.
 
+use std::convert::AsRef;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -9,6 +10,7 @@ use std::fs;
 use std::panic;
 use std::panic::UnwindSafe;
 use std::process::Command;
+use std::process::Stdio;
 use std::string::ToString;
 
 #[macro_use]
@@ -59,6 +61,9 @@ fn new_dep_vsn_pulled_correctly() {
     );
 }
 
+// `test_deps` defines dependencies that will be created as git repositories.
+// Each `Vec` element defines a Git commit, in order from from the initial
+// commit to the latest commit.
 fn test_deps()
     -> HashMap<&'static str, Vec<HashMap<&'static str, &'static str>>>
 {
@@ -72,6 +77,17 @@ fn test_deps()
         ],
         "their_scripts" => vec![
             hashmap!{"script.sh" => "echo 'hello, moon!'"},
+        ],
+        "all_scripts" => vec![
+            hashmap!{
+                "dpnd.txt" => indoc::indoc!{"
+                    deps
+
+                    my_scripts git git://localhost/my_scripts.git master
+                    your_scripts git git://localhost/your_scripts.git master
+                "},
+                "script.sh" => "echo 'hello, all!'",
+            }
         ],
     }
 }
@@ -257,11 +273,12 @@ fn write_test_deps_file(
     deps_file_conts
 }
 
-fn with_git_server<F, T>(dir: String, f: F) -> T
+fn with_git_server<S, F, T>(dir: S, f: F) -> T
 where
     F: FnOnce() -> T + UnwindSafe,
+    S: AsRef<str>,
 {
-    let git_exec_path = run_cmd(&dir, "git", &["--exec-path"]);
+    let git_exec_path = run_cmd(dir.as_ref(), "git", &["--exec-path"]);
 
     let git_exec_path = git_exec_path
         .strip_suffix("\n")
@@ -271,9 +288,14 @@ where
 
     // We run `git-daemon` directly because `git daemon` spawns `git-daemon`
     // but we lose its PID in the process.
+    //
+    // TODO Store the output of the standard streams for debugging purposes.
     let mut daemon = Command::new(git_exec_path + "/git-daemon")
         .args(&["--reuseaddr", "--base-path=.", "--export-all", "."])
-        .current_dir(dir)
+        .current_dir(dir.as_ref())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .spawn()
         .expect("couldn't spawn Git server");
 
@@ -296,6 +318,7 @@ fn new_test_cmd(root_test_dir: String) -> AssertCommand {
         .expect("couldn't create command for package binary");
     cmd.current_dir(root_test_dir);
     cmd.env_clear();
+    cmd.arg("install");
 
     cmd
 }
@@ -1086,6 +1109,265 @@ fn same_dep_diff_vsns() {
 }
 
 #[test]
+// Given the dependency file contains nested dependencies
+// When the command is run with `--recursive`
+// Then the nested dependencies are pulled to the correct locations with the
+//     correct contents
+fn nested_deps_pulled_correctly_with_long_flag() {
+    check_nested_deps_pulled_correctly(
+        "nested_deps_pulled_correctly_with_long_flag",
+        "--recursive",
+    )
+}
+
+fn check_nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_test_setup(&root_test_dir_name, &test_deps, &hashmap!{});
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        all_scripts git git://localhost/all_scripts.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg(flag);
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "all_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::AnyFile,
+                    "script.sh" => Node::File("echo 'hello, all!'"),
+                    "deps" => Node::Dir(hashmap!{
+                        "current_dpnd.txt" => Node::AnyFile,
+                        "my_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "script.sh" => Node::File("echo 'hello, world!'"),
+                        }),
+                        "your_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "script.sh" => Node::File("echo 'hello, sun!'"),
+                        }),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the dependency file contains nested dependencies
+// When the command is run with `-r`
+// Then the nested dependencies are pulled to the correct locations with the
+//     correct contents
+fn nested_deps_pulled_correctly_with_short_flag() {
+    check_nested_deps_pulled_correctly(
+        "nested_deps_pulled_correctly_with_short_flag",
+        "-r",
+    )
+}
+
+#[test]
+// Given the dependency file contains nested dependencies
+// When the command is run without recursion
+// Then the nested dependencies are not pulled
+fn nested_deps_not_pulled_without_recursion() {
+    let test_name = "nested_deps_not_pulled_without_recursion";
+    check_nested_deps_not_pulled_without_recursion(test_name);
+}
+
+fn check_nested_deps_not_pulled_without_recursion(test_name: &str)
+    -> TestSetup
+{
+    let test_deps = test_deps();
+    let TestSetup{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        create_test_setup(test_name, &test_deps, &hashmap!{});
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        all_scripts git git://localhost/all_scripts.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = with_git_server(
+        &dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "all_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::AnyFile,
+                    "script.sh" => Node::File("echo 'hello, all!'"),
+                }),
+            }),
+        }),
+    );
+
+    TestSetup{
+        dep_srcs_dir,
+        proj_dir,
+        deps_commit_hashes,
+        deps_file_conts: deps_file_conts.to_string(),
+    }
+}
+
+#[test]
+// Given the dependency file contains nested dependencies and the command was
+//     run without recursion
+// When the command is run with recursion
+// Then the nested dependencies are pulled to the correct locations with the
+//     correct contents
+fn run_with_recursion_after_run_without_recursion() {
+    let test_name = "run_with_recursion_after_run_without_recursion";
+    let TestSetup{deps_file_conts, dep_srcs_dir, proj_dir, ..} =
+        check_nested_deps_not_pulled_without_recursion(test_name);
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "all_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::AnyFile,
+                    "script.sh" => Node::File("echo 'hello, all!'"),
+                    "deps" => Node::Dir(hashmap!{
+                        "current_dpnd.txt" => Node::AnyFile,
+                        "my_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "script.sh" => Node::File("echo 'hello, world!'"),
+                        }),
+                        "your_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "script.sh" => Node::File("echo 'hello, sun!'"),
+                        }),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the dependency file contains nested dependencies that contain nested
+//     dependencies
+// When the command is run with `--recursive`
+// Then the nested dependencies are pulled to the correct locations with the
+//     correct contents
+fn double_nested_deps_pulled_correctly() {
+    let mut test_deps = test_deps();
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        all_scripts git git://localhost/all_scripts.git master
+    "};
+    test_deps.insert(
+        "nested_scripts",
+        vec![hashmap!{
+            "dpnd.txt" => nested_deps_file_conts,
+            "script.sh" => "echo 'hello!'",
+        }],
+    );
+    let TestSetup{dep_srcs_dir, proj_dir, ..} = create_test_setup(
+        "double_nested_deps_pulled_correctly",
+        &test_deps,
+        &hashmap!{},
+    );
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        nested_scripts git git://localhost/nested_scripts.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "nested_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::File(nested_deps_file_conts),
+                    "script.sh" => Node::File("echo 'hello!'"),
+                    "deps" => Node::Dir(hashmap!{
+                        "current_dpnd.txt" => Node::AnyFile,
+                        "all_scripts" => Node::Dir(hashmap!{
+                            ".git" => Node::AnyDir,
+                            "dpnd.txt" => Node::AnyFile,
+                            "script.sh" => Node::File("echo 'hello, all!'"),
+                            "deps" => Node::Dir(hashmap!{
+                                "current_dpnd.txt" => Node::AnyFile,
+                                "my_scripts" => Node::Dir(hashmap!{
+                                    ".git" => Node::AnyDir,
+                                    "script.sh" =>
+                                        Node::File("echo 'hello, world!'"),
+                                }),
+                                "your_scripts" => Node::Dir(hashmap!{
+                                    ".git" => Node::AnyDir,
+                                    "script.sh" =>
+                                        Node::File("echo 'hello, sun!'"),
+                                }),
+                            }),
+                        }),
+                    }),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
 // Given the dependency file doesn't exist
 // When the command is run
 // Then the command fails with an error
@@ -1109,14 +1391,14 @@ fn setup_test_with_deps_file<C: AsRef<[u8]>>(
     root_test_dir_name: &str,
     conts: C,
 )
-    -> AssertCommand
+    -> (String, AssertCommand)
 {
     let root_test_dir = create_root_test_dir(root_test_dir_name);
     let test_proj_dir = create_test_dir(root_test_dir, "proj");
     fs::write(format!("{}/dpnd.txt", test_proj_dir), conts)
         .expect("couldn't write dependency file");
 
-    new_test_cmd(test_proj_dir)
+    (test_proj_dir.clone(), new_test_cmd(test_proj_dir))
 }
 
 #[test]
@@ -1124,14 +1406,19 @@ fn setup_test_with_deps_file<C: AsRef<[u8]>>(
 // When the command is run
 // Then the command fails with an error
 fn empty_deps_file() {
-    let mut cmd = setup_test_with_deps_file("empty_deps_file", "");
+    let (test_proj_dir, mut cmd) =
+        setup_test_with_deps_file("empty_deps_file", "");
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr("The dependency file doesn't contain an output directory\n");
+        .stderr(format!(
+            "{}/dpnd.txt: This dependency file doesn't contain an output \
+             directory\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1139,7 +1426,7 @@ fn empty_deps_file() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_utf8() {
-    let mut cmd = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_utf8",
         [0x00, 0x00, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00],
     );
@@ -1149,10 +1436,11 @@ fn deps_file_invalid_utf8() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "The dependency file contains an invalid UTF-8 sequence after \
-             byte 4\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt: This dependency file contains an invalid UTF-8 \
+             sequence after byte 4\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1160,9 +1448,9 @@ fn deps_file_invalid_utf8() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_dep() {
-    let mut cmd = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_dep",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             proj tool source version extra
@@ -1174,10 +1462,11 @@ fn deps_file_invalid_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 3: Invalid dependency specification: 'proj tool source \
-             version extra'\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:3: Invalid dependency specification: 'proj tool \
+             source version extra'\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1185,9 +1474,9 @@ fn deps_file_invalid_dep() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_tool() {
-    let mut cmd = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_tool",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             proj tool source version
@@ -1199,10 +1488,11 @@ fn deps_file_invalid_tool() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 3: The 'proj' dependency specifies an invalid tool name \
-             ('tool'); the supported tool is 'git'\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:3: The dependency 'proj' specifies an invalid tool \
+             name ('tool'); the supported tool is 'git'\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1210,9 +1500,9 @@ fn deps_file_invalid_tool() {
 // When the command is run
 // Then the command fails with an error
 fn unavailable_git_proj_src() {
-    let mut cmd = setup_test_with_deps_file(
+    let (_, mut cmd) = setup_test_with_deps_file(
         "unavailable_git_proj_src",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             proj git git://localhost/my_scripts.git master
@@ -1225,7 +1515,9 @@ fn unavailable_git_proj_src() {
         .code(1)
         .stdout("")
         .stderr(indoc::indoc!{"
-            Couldn't retrieve the source for the 'proj' dependency: `git clone git://localhost/my_scripts.git .` failed with the following output:
+            Couldn't retrieve the source for the dependency 'proj': `git \
+             clone git://localhost/my_scripts.git .` failed with the \
+             following output:
 
             [!] Cloning into '.'...
             [!] fatal: unable to connect to localhost:
@@ -1252,7 +1544,7 @@ fn unavailable_git_proj_vsn() {
         ],
     );
     let test_proj_dir = create_test_dir(root_test_dir.clone(), "proj");
-    let deps_file_conts = indoc::indoc! {"
+    let deps_file_conts = indoc::indoc!{"
         target/deps
 
         my_scripts git git://localhost/my_scripts.git bad_commit
@@ -1260,7 +1552,10 @@ fn unavailable_git_proj_vsn() {
     let cmd_result = with_git_server(
         root_test_dir,
         || {
-            fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
+            fs::write(
+                test_proj_dir.to_string() + "/dpnd.txt",
+                &deps_file_conts,
+            )
                 .expect("couldn't write dependency file");
             let mut cmd = new_test_cmd(test_proj_dir.clone());
 
@@ -1272,9 +1567,11 @@ fn unavailable_git_proj_vsn() {
         .code(1)
         .stdout("")
         .stderr(indoc::indoc!{"
-            Couldn't change the version for the 'my_scripts' dependency: `git checkout bad_commit` failed with the following output:
+            Couldn't change the version for the 'my_scripts' dependency: `git \
+             checkout bad_commit` failed with the following output:
 
-            [!] error: pathspec 'bad_commit' did not match any file(s) known to git.
+            [!] error: pathspec 'bad_commit' did not match any file(s) known \
+             to git.
 
         "});
 }
@@ -1316,7 +1613,7 @@ fn dep_output_dir_is_file() {
     let test_proj_deps_dir = create_test_dir(test_proj_dir.clone(), "deps");
     fs::write(test_proj_deps_dir + "/my_scripts", "")
         .expect("couldn't write dummy target file");
-    let deps_file_conts = indoc::indoc! {"
+    let deps_file_conts = indoc::indoc!{"
         deps
 
         my_scripts git git://localhost/my_scripts.git master
@@ -1342,9 +1639,9 @@ fn dep_output_dir_is_file() {
 // When the command is run
 // Then the command fails with an error
 fn dup_dep_names() {
-    let mut cmd = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "dup_dep_names",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             my_scripts git git://localhost/my_scripts.git master
@@ -1357,10 +1654,11 @@ fn dup_dep_names() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 4: A dependency named 'my_scripts' is already defined on \
-             line 3\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:4: A dependency named 'my_scripts' is already \
+             defined on line 3\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1368,9 +1666,9 @@ fn dup_dep_names() {
 // When the command is run
 // Then the command fails with an error
 fn invalid_dep_name() {
-    let mut cmd = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "invalid_dep_name",
-        indoc::indoc! {"
+        indoc::indoc!{"
             target/deps
 
             my_scripts? git git://localhost/my_scripts.git master
@@ -1382,9 +1680,341 @@ fn invalid_dep_name() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 3: 'my_scripts?' contains an invalid character ('?') at \
-             position 11; dependency names can only contain numbers, letters, \
-             hyphens, underscores and periods\n",
+        .stderr(format!(
+            "{}/dpnd.txt:3: 'my_scripts?' contains an invalid character ('?') \
+             at position 11; dependency names can only contain numbers, \
+             letters, hyphens, underscores and periods\n",
+            test_proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file of a nested dependency is empty
+// When the command is run with `--recursive`
+// Then the command fails with an error
+fn empty_deps_file_in_nested_dep() {
+    let nested_deps_file_conts = "";
+    let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
+        create_nested_test_setup(
+            "empty_deps_file_in_nested_dep",
+            &nested_deps_file_conts,
         );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt: This nested dependency file (for \
+            'bad_dep') doesn't contain an output directory\n",
+            proj_dir,
+        ));
+    assert_nested_dep_contents(
+        &proj_dir,
+        &deps_file_conts,
+        &nested_deps_file_conts,
+    );
+}
+
+fn create_nested_test_setup(
+    root_test_dir_name: &str,
+    nested_deps_file_conts: &str,
+)
+    -> NestedTestSetup
+{
+    let mut test_deps = test_deps();
+    test_deps.insert(
+        "bad_dep",
+        vec![hashmap!{
+            "dpnd.txt" => nested_deps_file_conts,
+            "script.sh" => "echo 'bad!'",
+        }],
+    );
+    let TestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_test_setup(root_test_dir_name, &test_deps, &hashmap!{});
+
+    let deps_file_conts = indoc::indoc!{"
+        deps
+
+        bad_dep git git://localhost/bad_dep.git master
+    "};
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+
+    NestedTestSetup{
+        dep_srcs_dir,
+        proj_dir,
+        deps_file_conts: deps_file_conts.to_string(),
+    }
+}
+
+struct NestedTestSetup {
+    dep_srcs_dir: String,
+    proj_dir: String,
+    deps_file_conts: String,
+}
+
+fn assert_nested_dep_contents(
+    proj_dir: &str,
+    deps_file_conts: &str,
+    nested_deps_file_conts: &str,
+) {
+    assert_fs_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "bad_dep" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "dpnd.txt" => Node::File(&nested_deps_file_conts),
+                    "script.sh" => Node::File("echo 'bad!'"),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains an invalid
+//     dependency specification
+// When the command is run with `--recursive`
+// Then the command fails with an error
+fn deps_file_invalid_dep_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        target/deps
+
+        proj tool source version extra
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
+        create_nested_test_setup(
+            "deps_file_invalid_dep_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: Invalid dependency specification in \
+             nested dependency 'bad_dep': 'proj tool source version extra'\n",
+            proj_dir,
+        ));
+    assert_nested_dep_contents(
+        &proj_dir,
+        &deps_file_conts,
+        &nested_deps_file_conts,
+    );
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains an unknown tool
+// When the command is run with `--recursive`
+// Then the command fails with an error
+fn deps_file_invalid_tool_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        target/deps
+
+        proj tool source version
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
+        create_nested_test_setup(
+            "deps_file_invalid_tool_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: The dependency 'proj' of the nested \
+             dependency 'bad_dep' specifies an invalid tool name ('tool'); \
+             the supported tool is 'git'\n",
+            proj_dir,
+        ));
+    assert_nested_dep_contents(
+        &proj_dir,
+        &deps_file_conts,
+        &nested_deps_file_conts,
+    );
+}
+
+#[test]
+// Given the dependency file of a nested dependency specifies a Git dependency
+//     that is unavailable
+// When the command is run
+// Then the command fails with an error
+fn unavailable_git_proj_src_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        proj git git://localhost/no_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "unavailable_git_proj_src_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(indoc::indoc!{"
+            Couldn't retrieve the source for the dependency 'proj' in the \
+             nested dependency 'bad_dep': `git clone \
+             git://localhost/no_scripts.git .` failed with the following \
+             output:
+
+            [!] Cloning into '.'...
+            [!] fatal: remote error: access denied or repository not \
+             exported: /no_scripts.git
+
+        "});
+    // TODO Assert the contents of the filesystem.
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains two dependencies
+//     with the same name
+// When the command is run
+// Then the command fails with an error
+fn dup_dep_names_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        my_scripts git git://localhost/my_scripts.git master
+        my_scripts git git://localhost/my_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "dup_dep_names_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:4: A dependency named 'my_scripts' is \
+             already defined on line 3 in the nested dependency 'bad_dep'\n",
+            proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains a dependency with
+//     an invalid name
+// When the command is run
+// Then the command fails with an error
+fn invalid_dep_name_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        my_scripts? git git://localhost/my_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "invalid_dep_name_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: 'my_scripts?' contains an invalid \
+             character ('?') at position 11; dependency names can only \
+             contain numbers, letters, hyphens, underscores and periods\n",
+            proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains a dependency with
+//     a reserved name
+// When the command is run
+// Then the command fails with an error
+fn reserved_dep_name_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        current_dpnd.txt git git://localhost/my_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "reserved_dep_name_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: 'current_dpnd.txt' is a reserved \
+             name and can't be used as a dependency name\n",
+            proj_dir,
+        ));
 }
