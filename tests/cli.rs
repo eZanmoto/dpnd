@@ -1639,7 +1639,7 @@ fn dep_output_dir_is_file() {
 // When the command is run
 // Then the command fails with an error
 fn dup_dep_names() {
-    let (_, mut cmd) = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "dup_dep_names",
         indoc::indoc!{"
             target/deps
@@ -1654,10 +1654,11 @@ fn dup_dep_names() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 4: A dependency named 'my_scripts' is already defined on \
-             line 3\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:4: A dependency named 'my_scripts' is already \
+             defined on line 3\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1905,4 +1906,41 @@ fn unavailable_git_proj_src_in_nested_dep() {
 
         "});
     // TODO Assert the contents of the filesystem.
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains two dependencies
+//     with the same name
+// When the command is run
+// Then the command fails with an error
+fn dup_dep_names_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        my_scripts git git://localhost/my_scripts.git master
+        my_scripts git git://localhost/my_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "dup_dep_names_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:4: A dependency named 'my_scripts' is \
+             already defined on line 3 in the nested dependency 'bad_dep'\n",
+            proj_dir,
+        ));
 }

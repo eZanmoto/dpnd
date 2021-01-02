@@ -812,13 +812,26 @@ fn render_parse_deps_error(
 ) -> String {
     match err {
         ParseDepsError::DupDepName{ln_num, dep_name, orig_ln_num} => {
-            format!(
-                "Line {}: A dependency named '{}' is already defined on line \
-                 {}",
-                ln_num,
-                dep_name,
-                orig_ln_num,
-            )
+            if let Some(name) = proj_name {
+                format!(
+                    "{}:{}: A dependency named '{}' is already defined on \
+                     line {} in the nested dependency '{}'",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    orig_ln_num,
+                    name,
+                )
+            } else {
+                format!(
+                    "{}:{}: A dependency named '{}' is already defined on \
+                     line {}",
+                    render_path(&file_path),
+                    ln_num,
+                    dep_name,
+                    orig_ln_num,
+                )
+            }
         },
         ParseDepsError::ReservedDepName{ln_num, dep_name} => {
             format!(
