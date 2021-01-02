@@ -4,7 +4,6 @@
 
 use std::convert::AsRef;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fs;
 use std::string::ToString;
 
@@ -15,8 +14,10 @@ extern crate indoc;
 
 use assert_cmd::Command as AssertCommand;
 
+mod fs_check;
 mod test_setup;
 
+use fs_check::Node;
 use test_setup::Layout;
 
 #[test]
@@ -43,7 +44,7 @@ fn new_dep_vsn_pulled_correctly() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -91,102 +92,6 @@ fn test_deps()
     }
 }
 
-enum Node<'a> {
-    AnyDir,
-    AnyFile,
-    Dir(HashMap<&'a str, Node<'a>>),
-    File(&'a str),
-}
-
-fn assert_fs_contents<'a>(path: &str, exp: &Node<'a>) {
-    match exp {
-        Node::File(exp_conts) => {
-            let act_conts =
-                fs::read(&path)
-                    .unwrap_or_else(|_| panic!(
-                        "couldn't open '{}' as a file",
-                        &path,
-                    ));
-
-            assert!(
-                exp_conts.as_bytes().to_vec() == act_conts,
-                format!(
-                    "'{}' contained unexpected data, expected:\n{}",
-                    &path,
-                    exp_conts,
-                ),
-            );
-        }
-        Node::AnyDir => {
-            let md = fs::metadata(&path)
-                .unwrap_or_else(|_| panic!(
-                    "couldn't get metadata for '{}'",
-                    path,
-                ));
-            assert!(md.is_dir());
-        }
-        Node::AnyFile => {
-            let md = fs::metadata(&path)
-                .unwrap_or_else(|_| panic!(
-                    "couldn't get metadata for '{}'",
-                    path,
-                ));
-            assert!(md.is_file());
-        }
-        Node::Dir(exp_entries) => {
-            let act_entries =
-                fs::read_dir(&path)
-                    .unwrap_or_else(|_| panic!(
-                        "couldn't open '{}' as a directory",
-                        &path,
-                    ));
-
-            let mut act_entry_names: HashSet<String> = HashSet::new();
-            for act_entry in act_entries {
-                let entry =
-                    act_entry
-                        .unwrap_or_else(|_| panic!(
-                            "couldn't get entry from '{}'",
-                            &path,
-                        ));
-
-                let entry_name: String =
-                    entry
-                        .file_name()
-                        .into_string()
-                        .expect("couldn't read entry's file name as Unicode");
-
-                let exp_entry =
-                    exp_entries
-                        .get::<str>(&entry_name)
-                        .unwrap_or_else(|| panic!(
-                            "found unexpected entry '{}/{}' in filesystem",
-                            path,
-                            entry_name,
-                        ));
-
-                assert_fs_contents(
-                    &format!("{}/{}", path, entry_name),
-                    exp_entry,
-                );
-
-                act_entry_names.insert(entry_name);
-            }
-
-            for exp_entry_name in exp_entries.keys() {
-                assert!(
-                    act_entry_names.contains::<str>(&exp_entry_name),
-                    format!(
-                        "couldn't find expected entry '{}/{}' in filesystem",
-                        path,
-                        exp_entry_name,
-                    ),
-                );
-            }
-        }
-    }
-}
-
 #[test]
 // Given the dependency file is in an empty directory and the oldest version of
 //     its dependency is specified
@@ -211,7 +116,7 @@ fn old_dep_vsn_pulled_correctly() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -253,7 +158,7 @@ fn run_in_proj_subdir() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -298,7 +203,7 @@ fn tool_is_idempotent() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -344,7 +249,7 @@ fn add_first_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -403,7 +308,7 @@ fn run_tool(
         deps_output_dir.insert(dep_name, Node::Dir(dir_conts));
     }
 
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -446,7 +351,7 @@ fn add_second_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -503,7 +408,7 @@ fn add_third_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -563,7 +468,7 @@ fn rm_third_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -615,7 +520,7 @@ fn rm_second_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -660,7 +565,7 @@ fn rm_first_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -711,7 +616,7 @@ fn add_after_rm() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -757,7 +662,7 @@ fn upgrade_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -803,7 +708,7 @@ fn downgrade_dep() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -855,7 +760,7 @@ fn same_dep_diff_vsns() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -911,7 +816,7 @@ fn check_nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(deps_file_conts),
@@ -983,7 +888,7 @@ fn check_nested_deps_not_pulled_without_recursion(test_name: &str)
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(deps_file_conts),
@@ -1027,7 +932,7 @@ fn run_with_recursion_after_run_without_recursion() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
@@ -1098,7 +1003,7 @@ fn double_nested_deps_pulled_correctly() {
     );
 
     cmd_result.code(0).stdout("").stderr("");
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(deps_file_conts),
@@ -1539,7 +1444,7 @@ fn assert_nested_dep_contents(
     deps_file_conts: &str,
     nested_deps_file_conts: &str,
 ) {
-    assert_fs_contents(
+    fs_check::assert_contents(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
