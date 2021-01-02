@@ -167,7 +167,7 @@ pub fn write_test_deps_file(
 )
     -> String
 {
-    let mut deps_file_conts = indoc::formatdoc!{
+    let mut deps_file_conts = formatdoc!{
         "
             # This is the output directory.
             target/deps
@@ -177,7 +177,7 @@ pub fn write_test_deps_file(
     };
 
     for (dep_name, dep_commit_num) in deps_commit_nums {
-        deps_file_conts = indoc::formatdoc!(
+        deps_file_conts = formatdoc!(
             "
                 {deps_file_conts}
                 {dep_name} git git://localhost/{dep_name}.git {dep_vsn}
