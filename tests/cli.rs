@@ -1666,7 +1666,7 @@ fn dup_dep_names() {
 // When the command is run
 // Then the command fails with an error
 fn invalid_dep_name() {
-    let (_, mut cmd) = setup_test_with_deps_file(
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "invalid_dep_name",
         indoc::indoc!{"
             target/deps
@@ -1680,11 +1680,12 @@ fn invalid_dep_name() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(
-            "Line 3: 'my_scripts?' contains an invalid character ('?') at \
-             position 11; dependency names can only contain numbers, letters, \
-             hyphens, underscores and periods\n",
-        );
+        .stderr(format!(
+            "{}/dpnd.txt:3: 'my_scripts?' contains an invalid character ('?') \
+             at position 11; dependency names can only contain numbers, \
+             letters, hyphens, underscores and periods\n",
+            test_proj_dir,
+        ));
 }
 
 #[test]
@@ -1941,6 +1942,43 @@ fn dup_dep_names_in_nested_dep() {
         .stderr(format!(
             "{}/deps/bad_dep/dpnd.txt:4: A dependency named 'my_scripts' is \
              already defined on line 3 in the nested dependency 'bad_dep'\n",
+            proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file of a nested dependency contains a dependency with
+//     an invalid name
+// When the command is run
+// Then the command fails with an error
+fn invalid_dep_name_in_nested_dep() {
+    let nested_deps_file_conts = indoc::indoc!{"
+        deps
+
+        my_scripts? git git://localhost/my_scripts.git master
+    "};
+    let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
+        create_nested_test_setup(
+            "invalid_dep_name_in_nested_dep",
+            &nested_deps_file_conts,
+        );
+    let cmd_result = with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = new_test_cmd(proj_dir.clone());
+            cmd.arg("--recursive");
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/deps/bad_dep/dpnd.txt:3: 'my_scripts?' contains an invalid \
+             character ('?') at position 11; dependency names can only \
+             contain numbers, letters, hyphens, underscores and periods\n",
             proj_dir,
         ));
 }

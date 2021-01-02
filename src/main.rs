@@ -851,9 +851,10 @@ fn render_parse_deps_error(
                 bad_char = format!(" ('{}')", chr);
             }
             format!(
-                "Line {}: '{}' contains an invalid character{} at position \
-                 {}; dependency names can only contain numbers, letters, \
-                 hyphens, underscores and periods",
+                "{}:{}: '{}' contains an invalid character{} at position {}; \
+                 dependency names can only contain numbers, letters, hyphens, \
+                 underscores and periods",
+                render_path(&file_path),
                 ln_num,
                 dep_name,
                 bad_char,
