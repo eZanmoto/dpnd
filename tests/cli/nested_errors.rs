@@ -35,11 +35,10 @@ fn empty_deps_file_in_nested_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/deps/bad_dep/dpnd.txt: This nested dependency file (for \
+        .stderr(
+            "deps/bad_dep/dpnd.txt: This nested dependency file (for \
             'bad_dep') doesn't contain an output directory\n",
-            proj_dir,
-        ));
+        );
     assert_nested_dep_contents(
         &proj_dir,
         &deps_file_conts,
@@ -136,11 +135,10 @@ fn deps_file_invalid_dep_in_nested_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/deps/bad_dep/dpnd.txt:3: Invalid dependency specification in \
+        .stderr(
+            "deps/bad_dep/dpnd.txt:3: Invalid dependency specification in \
              nested dependency 'bad_dep': 'proj tool source version extra'\n",
-            proj_dir,
-        ));
+        );
     assert_nested_dep_contents(
         &proj_dir,
         &deps_file_conts,
@@ -176,12 +174,11 @@ fn deps_file_invalid_tool_in_nested_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/deps/bad_dep/dpnd.txt:3: The dependency 'proj' of the nested \
+        .stderr(
+            "deps/bad_dep/dpnd.txt:3: The dependency 'proj' of the nested \
              dependency 'bad_dep' specifies an invalid tool name ('tool'); \
              the supported tool is 'git'\n",
-            proj_dir,
-        ));
+        );
     assert_nested_dep_contents(
         &proj_dir,
         &deps_file_conts,
@@ -262,11 +259,10 @@ fn dup_dep_names_in_nested_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/deps/bad_dep/dpnd.txt:4: A dependency named 'my_scripts' is \
+        .stderr(
+            "deps/bad_dep/dpnd.txt:4: A dependency named 'my_scripts' is \
              already defined on line 3 in the nested dependency 'bad_dep'\n",
-            proj_dir,
-        ));
+        );
 }
 
 #[test]
@@ -298,12 +294,11 @@ fn invalid_dep_name_in_nested_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/deps/bad_dep/dpnd.txt:3: 'my_scripts?' contains an invalid \
+        .stderr(
+            "deps/bad_dep/dpnd.txt:3: 'my_scripts?' contains an invalid \
              character ('?') at position 11; dependency names can only \
              contain numbers, letters, hyphens, underscores and periods\n",
-            proj_dir,
-        ));
+        );
 }
 
 #[test]
@@ -335,9 +330,8 @@ fn reserved_dep_name_in_nested_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/deps/bad_dep/dpnd.txt:3: 'current_dpnd.txt' is a reserved \
-             name and can't be used as a dependency name\n",
-            proj_dir,
-        ));
+        .stderr(
+            "deps/bad_dep/dpnd.txt:3: 'current_dpnd.txt' is a reserved name \
+             and can't be used as a dependency name\n",
+        );
 }

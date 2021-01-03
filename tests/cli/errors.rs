@@ -34,14 +34,14 @@ fn setup_test_with_deps_file<C: AsRef<[u8]>>(
     root_test_dir_name: &str,
     conts: C,
 )
-    -> (String, AssertCommand)
+    -> AssertCommand
 {
     let root_test_dir = test_setup::create_root_dir(root_test_dir_name);
     let test_proj_dir = test_setup::create_dir(root_test_dir, "proj");
     fs::write(format!("{}/dpnd.txt", test_proj_dir), conts)
         .expect("couldn't write dependency file");
 
-    (test_proj_dir.clone(), test_setup::new_test_cmd(test_proj_dir))
+    test_setup::new_test_cmd(test_proj_dir)
 }
 
 #[test]
@@ -52,18 +52,17 @@ fn directory_as_deps_file() {
     let root_test_dir = test_setup::create_root_dir("directory_as_deps_file");
     let test_proj_dir = test_setup::create_dir(root_test_dir, "proj");
     test_setup::create_dir(test_proj_dir.clone(), "dpnd.txt");
-    let mut cmd = test_setup::new_test_cmd(test_proj_dir.clone());
+    let mut cmd = test_setup::new_test_cmd(test_proj_dir);
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "Couldn't read the dependency file at '{}/dpnd.txt': Is a \
-             directory (os error 21)\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "Couldn't read the dependency file at 'dpnd.txt': Is a directory \
+             (os error 21)\n",
+        );
 }
 
 #[test]
@@ -71,19 +70,17 @@ fn directory_as_deps_file() {
 // When the command is run
 // Then the command fails with an error
 fn empty_deps_file() {
-    let (test_proj_dir, mut cmd) =
-        setup_test_with_deps_file("empty_deps_file", "");
+    let mut cmd = setup_test_with_deps_file("empty_deps_file", "");
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt: This dependency file doesn't contain an output \
+        .stderr(
+            "dpnd.txt: This dependency file doesn't contain an output \
              directory\n",
-            test_proj_dir,
-        ));
+        );
 }
 
 #[test]
@@ -91,7 +88,7 @@ fn empty_deps_file() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_utf8() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "deps_file_invalid_utf8",
         [0x00, 0x00, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00],
     );
@@ -101,11 +98,10 @@ fn deps_file_invalid_utf8() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt: This dependency file contains an invalid UTF-8 \
+        .stderr(
+            "dpnd.txt: This dependency file contains an invalid UTF-8 \
              sequence after byte 4\n",
-            test_proj_dir,
-        ));
+        );
 }
 
 #[test]
@@ -113,7 +109,7 @@ fn deps_file_invalid_utf8() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_dep() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "deps_file_invalid_dep",
         indoc!{"
             deps
@@ -127,11 +123,10 @@ fn deps_file_invalid_dep() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:3: Invalid dependency specification: 'proj tool \
-             source version extra'\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:3: Invalid dependency specification: 'proj tool source \
+             version extra'\n",
+        );
 }
 
 #[test]
@@ -139,7 +134,7 @@ fn deps_file_invalid_dep() {
 // When the command is run
 // Then the command fails with an error
 fn deps_file_invalid_tool() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "deps_file_invalid_tool",
         indoc!{"
             deps
@@ -153,11 +148,10 @@ fn deps_file_invalid_tool() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:3: The dependency 'proj' specifies an invalid tool \
-             name ('tool'); the supported tool is 'git'\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:3: The dependency 'proj' specifies an invalid tool name \
+             ('tool'); the supported tool is 'git'\n",
+        );
 }
 
 #[test]
@@ -165,7 +159,7 @@ fn deps_file_invalid_tool() {
 // When the command is run
 // Then the command fails with an error
 fn unavailable_git_proj_src() {
-    let (_, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "unavailable_git_proj_src",
         indoc!{"
             deps
@@ -255,18 +249,17 @@ fn main_output_dir_is_file() {
     let deps_file_conts = "deps\n";
     fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
         .expect("couldn't write dependency file");
-    let mut cmd = test_setup::new_test_cmd(test_proj_dir.clone());
+    let mut cmd = test_setup::new_test_cmd(test_proj_dir);
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "Couldn't read the state file ('{}/deps/current_dpnd.txt'): Not a \
+        .stderr(
+            "Couldn't read the state file ('deps/current_dpnd.txt'): Not a \
              directory (os error 20)\n",
-            test_proj_dir,
-        ));
+        );
 }
 
 #[test]
@@ -287,18 +280,17 @@ fn dep_output_dir_is_file() {
     "};
     fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
         .expect("couldn't write dependency file");
-    let mut cmd = test_setup::new_test_cmd(test_proj_dir.clone());
+    let mut cmd = test_setup::new_test_cmd(test_proj_dir);
 
     let cmd_result = cmd.assert();
 
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "Couldn't remove '{}/deps/my_scripts', the output directory for \
-             the 'my_scripts' dependency: Not a directory (os error 20)\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "Couldn't remove 'deps/my_scripts', the output directory for the \
+             'my_scripts' dependency: Not a directory (os error 20)\n",
+        );
 }
 
 #[test]
@@ -306,7 +298,7 @@ fn dep_output_dir_is_file() {
 // When the command is run
 // Then the command fails with an error
 fn dup_dep_names() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "dup_dep_names",
         indoc!{"
             deps
@@ -321,11 +313,10 @@ fn dup_dep_names() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:4: A dependency named 'my_scripts' is already \
-             defined on line 3\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:4: A dependency named 'my_scripts' is already defined \
+             on line 3\n",
+        );
 }
 
 #[test]
@@ -333,7 +324,7 @@ fn dup_dep_names() {
 // When the command is run
 // Then the command fails with an error
 fn invalid_dep_name() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "invalid_dep_name",
         indoc!{"
             deps
@@ -347,12 +338,11 @@ fn invalid_dep_name() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:3: 'my_scripts?' contains an invalid character ('?') \
-             at position 11; dependency names can only contain numbers, \
-             letters, hyphens, underscores and periods\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:3: 'my_scripts?' contains an invalid character ('?') at \
+             position 11; dependency names can only contain numbers, letters, \
+             hyphens, underscores and periods\n",
+        );
 }
 
 #[test]
@@ -361,7 +351,7 @@ fn invalid_dep_name() {
 // When the command is run
 // Then the command fails with an error
 fn output_dir_starts_with_relative_ref() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "output_dir_starts_with_relative_ref",
         indoc!{"
             ./deps
@@ -373,11 +363,10 @@ fn output_dir_starts_with_relative_ref() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:1: This dependency file contains an invalid \
-             component ('.') in its output directory\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:1: This dependency file contains an invalid component \
+             ('.') in its output directory\n",
+        );
 }
 
 #[test]
@@ -386,7 +375,7 @@ fn output_dir_starts_with_relative_ref() {
 // When the command is run
 // Then the command fails with an error
 fn output_dir_starts_with_back_ref() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "output_dir_starts_with_back_ref",
         indoc!{"
             ../deps
@@ -398,11 +387,10 @@ fn output_dir_starts_with_back_ref() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:1: This dependency file contains an invalid \
-             component ('..') in its output directory\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:1: This dependency file contains an invalid component \
+             ('..') in its output directory\n",
+        );
 }
 
 #[test]
@@ -411,7 +399,7 @@ fn output_dir_starts_with_back_ref() {
 // When the command is run
 // Then the command fails with an error
 fn output_dir_contains_relative_ref() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "output_dir_contains_relative_ref",
         indoc!{"
             target/./deps
@@ -423,11 +411,10 @@ fn output_dir_contains_relative_ref() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:1: This dependency file contains an invalid \
-             component ('.') in its output directory\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:1: This dependency file contains an invalid component \
+             ('.') in its output directory\n",
+        );
 }
 
 #[test]
@@ -436,7 +423,7 @@ fn output_dir_contains_relative_ref() {
 // When the command is run
 // Then the command fails with an error
 fn output_dir_contains_back_ref() {
-    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+    let mut cmd = setup_test_with_deps_file(
         "output_dir_contains_back_ref",
         indoc!{"
             target/../deps
@@ -448,9 +435,8 @@ fn output_dir_contains_back_ref() {
     cmd_result
         .code(1)
         .stdout("")
-        .stderr(format!(
-            "{}/dpnd.txt:1: This dependency file contains an invalid \
-             component ('..') in its output directory\n",
-            test_proj_dir,
-        ));
+        .stderr(
+            "dpnd.txt:1: This dependency file contains an invalid component \
+             ('..') in its output directory\n",
+        );
 }

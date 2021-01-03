@@ -72,6 +72,16 @@ fn main() {
 
     match args.subcommand() {
         ("install", Some(sub_args)) => {
+            let cwd = match env::current_dir() {
+                Ok(dir) => {
+                    dir
+                },
+                Err(err) => {
+                    eprintln!("Couldn't get the current directory: {}", err);
+                    process::exit(1);
+                },
+            };
+
             let mut tools: HashMap<String, &dyn DepTool<GitCmdError>> =
                 HashMap::new();
             tools.insert("git".to_string(), &Git{});
@@ -84,10 +94,11 @@ fn main() {
                     bad_dep_name_chars,
                     tools,
                 },
+                &cwd,
                 sub_args.is_present(install_recursive_flag),
             );
             if let Err(err) = install_result {
-                let msg = render_install_error(err, &deps_file_name);
+                let msg = render_install_error(err, &cwd, &deps_file_name);
                 eprintln!("{}", msg);
                 process::exit(1);
             }
@@ -111,14 +122,11 @@ struct Installer<'a, E> {
     tools: HashMap<String, &'a (dyn DepTool<E> + 'a)>,
 }
 
-fn install(installer: &Installer<GitCmdError>, recurse: bool)
+fn install(installer: &Installer<GitCmdError>, cwd: &PathBuf, recurse: bool)
     -> Result<(), InstallError<GitCmdError>>
 {
-    let cwd = env::current_dir()
-        .context(GetCurrentDirFailed{})?;
-
     let (proj_dir, deps_file_path, raw_deps_spec) =
-        match read_deps_file(cwd, &installer.deps_file_name) {
+        match read_deps_file(&cwd, &installer.deps_file_name) {
             Ok(maybe_v) => {
                 if let Some(v) = maybe_v {
                     v
@@ -201,7 +209,6 @@ enum InstallError<E>
 where
     E: Error + 'static
 {
-    GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
     ReadDepsFileFailed{source: ReadDepsFileError},
     ConvDepsFileUtf8Failed{
@@ -289,10 +296,10 @@ where
 // `read_deps_file` reads the file named `deps_file_name` in `start` or the
 // deepest of `start`s ancestor directories that contains a file named
 // `deps_file_name`.
-fn read_deps_file(start: PathBuf, deps_file_name: &str)
+fn read_deps_file(start: &PathBuf, deps_file_name: &str)
     -> Result<Option<(PathBuf, PathBuf, Vec<u8>)>, ReadDepsFileError>
 {
-    let mut dir = start;
+    let mut dir = start.to_path_buf();
     loop {
         let deps_file_path = dir.clone().join(deps_file_name);
 
@@ -660,13 +667,14 @@ enum WriteStateFileError {
     WriteDepLineFailed{source: IoError},
 }
 
-fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
+fn render_install_error(
+    err: InstallError<GitCmdError>,
+    cwd: &PathBuf,
+    deps_file_name: &str,
+)
     -> String
 {
     match err {
-        InstallError::GetCurrentDirFailed{source} => {
-            format!("Couldn't get the current directory: {}", source)
-        },
         InstallError::NoDepsFileFound => {
             format!(
                 "Couldn't find the dependency file '{}' in the current \
@@ -679,7 +687,7 @@ fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
         } => {
             format!(
                 "Couldn't read the dependency file at '{}': {}",
-                render_path(&deps_file_path),
+                render_rel_path_else_abs(&cwd, &deps_file_path),
                 source,
             )
         },
@@ -688,7 +696,7 @@ fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
                 format!(
                     "{}: This nested dependency file (for '{}') contains an \
                      invalid UTF-8 sequence after byte {}",
-                    render_path(&path),
+                    render_rel_path_else_abs(&cwd, &path),
                     source.utf8_error().valid_up_to(),
                     name,
                 )
@@ -696,13 +704,13 @@ fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
                 format!(
                     "{}: This dependency file contains an invalid UTF-8 \
                      sequence after byte {}",
-                    render_path(&path),
+                    render_rel_path_else_abs(&cwd, &path),
                     source.utf8_error().valid_up_to(),
                 )
             }
         },
         InstallError::ParseDepsConfFailed{source, path, dep_name} => {
-            render_parse_deps_conf_error(source, &path, dep_name)
+            render_parse_deps_conf_error(source, &cwd, &path, dep_name)
         },
         InstallError::InstallProjDepsFailed{source, dep_name} => {
             let dep_descr =
@@ -711,7 +719,7 @@ fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
                 } else {
                     "".to_string()
                 };
-            render_install_proj_deps_error(source, &dep_descr)
+            render_install_proj_deps_error(source, &cwd, &dep_descr)
         },
         InstallError::ReadNestedDepsFileFailed{
             source,
@@ -722,9 +730,9 @@ fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
             format!(
                 "Couldn't read the dependency file ('{}') for the nested \
                  dependency '{}' ('{}'): {}",
-                render_path(&path),
+                render_rel_path_else_abs(&cwd, &path),
                 dep_name,
-                render_path(&dep_proj_path),
+                render_rel_path_else_abs(&cwd, &dep_proj_path),
                 source,
             )
         },
@@ -733,42 +741,44 @@ fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
 
 fn render_install_proj_deps_error(
     err: InstallProjDepsError<GitCmdError>,
+    cwd: &PathBuf,
     dep_descr: &str,
 ) -> String {
     match err {
         InstallProjDepsError::ReadStateFileFailed{source, path} =>
             format!(
                 "Couldn't read the state file ('{}'): {}",
-                render_path(&path),
+                render_rel_path_else_abs(&cwd, &path),
                 source,
             ),
         InstallProjDepsError::ConvStateFileUtf8Failed{source, path} =>
             format!(
                 "The state file ('{}') contains an invalid UTF-8 sequence \
                  after byte {}",
-                render_path(&path),
+                render_rel_path_else_abs(&cwd, &path),
                 source.utf8_error().valid_up_to(),
             ),
         InstallProjDepsError::ParseStateFileFailed{source, path} =>
             format!(
                 "The state file ('{}') is invalid ({}), please remove this \
                  file and try again",
-                render_path(&path),
-                render_parse_deps_error(source, &path, None),
+                render_rel_path_else_abs(&cwd, &path),
+                render_parse_deps_error(source, &cwd, &path, None),
             ),
         InstallProjDepsError::CreateMainOutputDirFailed{source, path} =>
             format!(
                 "Couldn't create {}, the main output directory: {}",
-                render_path(&path),
+                render_rel_path_else_abs(&cwd, &path),
                 source,
             ),
         InstallProjDepsError::InstallDepsFailed{source} =>
-            render_install_deps_error(source, &dep_descr),
+            render_install_deps_error(source, &cwd, &dep_descr),
     }
 }
 
 fn render_install_deps_error(
     err: InstallDepsError<GitCmdError>,
+    cwd: &PathBuf,
     dep_descr: &str,
 ) -> String {
     match err {
@@ -780,7 +790,7 @@ fn render_install_deps_error(
             format!(
                 "Couldn't remove '{}', the output directory for the '{}' \
                  dependency: {}",
-                render_path(&path),
+                render_rel_path_else_abs(&cwd, &path),
                 dep_name,
                 source,
             ),
@@ -791,6 +801,7 @@ fn render_install_deps_error(
         } =>
             render_write_cur_deps_err(
                 source,
+                cwd,
                 &state_file_path,
                 &format!("removing '{}'", dep_name),
             ),
@@ -798,7 +809,7 @@ fn render_install_deps_error(
             format!(
                 "Couldn't create '{}', the output directory for the '{}' \
                  dependency: {}",
-                render_path(&path),
+                render_rel_path_else_abs(&cwd, &path),
                 dep_name,
                 source,
             ),
@@ -809,12 +820,14 @@ fn render_install_deps_error(
         } =>
             render_write_cur_deps_err(
                 source,
+                &cwd,
                 &state_file_path,
                 &format!("installing '{}'", dep_name),
             ),
         InstallDepsError::WriteInitialCurDepsFailed{source, state_file_path} =>
             render_write_cur_deps_err(
                 source,
+                &cwd,
                 &state_file_path,
                 "updating dependencies",
             ),
@@ -841,6 +854,7 @@ fn render_install_deps_error(
 
 fn render_parse_deps_conf_error(
     err: ParseDepsConfError,
+    cwd: &PathBuf,
     deps_file_path: &PathBuf,
     dep_name: Option<String>,
 ) -> String {
@@ -852,14 +866,14 @@ fn render_parse_deps_conf_error(
                         format!(
                             "{}: This nested dependency file (for '{}') \
                              doesn't contain an output directory",
-                            render_path(&deps_file_path),
+                            render_rel_path_else_abs(&cwd, &deps_file_path),
                             name,
                         )
                     } else {
                         format!(
                             "{}: This dependency file doesn't contain an \
                              output directory",
-                            render_path(&deps_file_path),
+                            render_rel_path_else_abs(&cwd, &deps_file_path),
                         )
                     },
                 ParseOutputDirError::InvalidPart{ln_num, part} =>
@@ -868,7 +882,7 @@ fn render_parse_deps_conf_error(
                             "{}:{}: This nested dependency file (for '{}') \
                              contains an invalid component ('{}') in its \
                              output directory",
-                            render_path(&deps_file_path),
+                            render_rel_path_else_abs(&cwd, &deps_file_path),
                             ln_num,
                             name,
                             part,
@@ -877,19 +891,20 @@ fn render_parse_deps_conf_error(
                         format!(
                             "{}:{}: This dependency file contains an invalid \
                              component ('{}') in its output directory",
-                            render_path(&deps_file_path),
+                            render_rel_path_else_abs(&cwd, &deps_file_path),
                             ln_num,
                             part,
                         )
                     },
             },
         ParseDepsConfError::ParseDepsFailed{source} =>
-            render_parse_deps_error(source, &deps_file_path, dep_name),
+            render_parse_deps_error(source, &cwd, &deps_file_path, dep_name),
     }
 }
 
 fn render_parse_deps_error(
     err: ParseDepsError,
+    cwd: &PathBuf,
     file_path: &PathBuf,
     proj_name: Option<String>,
 ) -> String {
@@ -899,7 +914,7 @@ fn render_parse_deps_error(
                 format!(
                     "{}:{}: A dependency named '{}' is already defined on \
                      line {} in the nested dependency '{}'",
-                    render_path(&file_path),
+                    render_rel_path_else_abs(&cwd, &file_path),
                     ln_num,
                     dep_name,
                     orig_ln_num,
@@ -909,7 +924,7 @@ fn render_parse_deps_error(
                 format!(
                     "{}:{}: A dependency named '{}' is already defined on \
                      line {}",
-                    render_path(&file_path),
+                    render_rel_path_else_abs(&cwd, &file_path),
                     ln_num,
                     dep_name,
                     orig_ln_num,
@@ -920,7 +935,7 @@ fn render_parse_deps_error(
             format!(
                 "{}:{}: '{}' is a reserved name and can't be used as a \
                  dependency name",
-                render_path(&file_path),
+                render_rel_path_else_abs(&cwd, &file_path),
                 ln_num,
                 dep_name,
             )
@@ -938,7 +953,7 @@ fn render_parse_deps_error(
                 "{}:{}: '{}' contains an invalid character{} at position {}; \
                  dependency names can only contain numbers, letters, hyphens, \
                  underscores and periods",
-                render_path(&file_path),
+                render_rel_path_else_abs(&cwd, &file_path),
                 ln_num,
                 dep_name,
                 bad_char,
@@ -950,7 +965,7 @@ fn render_parse_deps_error(
                 format!(
                     "{}:{}: Invalid dependency specification in nested \
                      dependency '{}': '{}'",
-                    render_path(&file_path),
+                    render_rel_path_else_abs(&cwd, &file_path),
                     ln_num,
                     name,
                     line,
@@ -958,7 +973,7 @@ fn render_parse_deps_error(
             } else {
                 format!(
                     "{}:{}: Invalid dependency specification: '{}'",
-                    render_path(&file_path),
+                    render_rel_path_else_abs(&cwd, &file_path),
                     ln_num,
                     line,
                 )
@@ -970,7 +985,7 @@ fn render_parse_deps_error(
                     "{}:{}: The dependency '{}' of the nested dependency '{}' \
                      specifies an invalid tool name ('{}'); the supported \
                      tool is 'git'",
-                    render_path(&file_path),
+                    render_rel_path_else_abs(&cwd, &file_path),
                     ln_num,
                     dep_name,
                     name,
@@ -980,7 +995,7 @@ fn render_parse_deps_error(
                 format!(
                     "{}:{}: The dependency '{}' specifies an invalid tool \
                      name ('{}'); the supported tool is 'git'",
-                    render_path(&file_path),
+                    render_rel_path_else_abs(&cwd, &file_path),
                     ln_num,
                     dep_name,
                     tool_name,
@@ -992,6 +1007,7 @@ fn render_parse_deps_error(
 
 fn render_write_cur_deps_err(
     err: WriteStateFileError,
+    cwd: &PathBuf,
     state_file_path: &PathBuf,
     action: &str,
 ) -> String {
@@ -999,18 +1015,35 @@ fn render_write_cur_deps_err(
         WriteStateFileError::OpenFailed{source} =>
             format!(
                 "Couldn't open the state file ('{}') for writing after {}: {}",
-                render_path(state_file_path),
+                render_rel_path_else_abs(&cwd, state_file_path),
                 action,
                 source,
             ),
         WriteStateFileError::WriteDepLineFailed{source} =>
             format!(
                 "Couldn't write to the state file ('{}') after {}: {}",
-                render_path(state_file_path),
+                render_rel_path_else_abs(&cwd, state_file_path),
                 action,
                 source,
             ),
     }
+}
+
+// `render_rel_path_else_abs` renders `path` with `pre` stripped if `path` is a
+// subdirectory of `pre`, otherwise `path` is rendered as an absolute path.
+fn render_rel_path_else_abs(pre: &PathBuf, path: &PathBuf) -> String {
+    let mut path_parts = path.iter();
+    for pre_part in pre {
+        if let Some(maybe_path_part) = path_parts.next() {
+            if pre_part != maybe_path_part {
+                return render_path(path)
+            }
+        } else {
+            return render_path(path)
+        }
+    }
+
+    render_path(&path_parts.collect::<PathBuf>())
 }
 
 fn render_path(path: &PathBuf) -> String {
