@@ -1,4 +1,4 @@
-// Copyright 2020 Sean Kelleher. All rights reserved.
+// Copyright 2020-2021 Sean Kelleher. All rights reserved.
 // Use of this source code is governed by an MIT
 // licence that can be found in the LICENCE file.
 
@@ -87,7 +87,8 @@ fn main() {
                 sub_args.is_present(install_recursive_flag),
             );
             if let Err(err) = install_result {
-                print_install_error(err, &deps_file_name);
+                let msg = render_install_error(err, &deps_file_name);
+                eprintln!("{}", msg);
                 process::exit(1);
             }
         },
@@ -647,47 +648,49 @@ enum WriteStateFileError {
     WriteDepLineFailed{source: IoError},
 }
 
-fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
+fn render_install_error(err: InstallError<GitCmdError>, deps_file_name: &str)
+    -> String
+{
     match err {
         InstallError::GetCurrentDirFailed{source} => {
-            eprintln!("Couldn't get the current directory: {}", source);
+            format!("Couldn't get the current directory: {}", source)
         },
         InstallError::NoDepsFileFound => {
-            eprintln!(
+            format!(
                 "Couldn't find the dependency file '{}' in the current \
                  directory or parent directories",
                 deps_file_name,
-            );
+            )
         },
         InstallError::ReadDepsFileFailed{
             source: ReadDepsFileError::ReadFailed{source, deps_file_path},
         } => {
-            eprintln!(
+            format!(
                 "Couldn't read the dependency file at '{}': {}",
                 render_path(&deps_file_path),
                 source,
-            );
+            )
         },
         InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} => {
             if let Some(name) = dep_name {
-                eprintln!(
+                format!(
                     "{}: This nested dependency file (for '{}') contains an \
                      invalid UTF-8 sequence after byte {}",
                     render_path(&path),
                     source.utf8_error().valid_up_to(),
                     name,
-                );
+                )
             } else {
-                eprintln!(
+                format!(
                     "{}: This dependency file contains an invalid UTF-8 \
                      sequence after byte {}",
                     render_path(&path),
                     source.utf8_error().valid_up_to(),
-                );
+                )
             }
         },
         InstallError::ParseDepsConfFailed{source, path, dep_name} => {
-            print_parse_deps_conf_error(source, &path, dep_name);
+            render_parse_deps_conf_error(source, &path, dep_name)
         },
         InstallError::InstallProjDepsFailed{source, dep_name} => {
             let dep_descr =
@@ -696,7 +699,7 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                 } else {
                     "".to_string()
                 };
-            print_install_proj_deps_error(source, &dep_descr);
+            render_install_proj_deps_error(source, &dep_descr)
         },
         InstallError::ReadNestedDepsFileFailed{
             source,
@@ -704,65 +707,65 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
             dep_name,
             dep_proj_path,
         } => {
-            eprintln!(
+            format!(
                 "Couldn't read the dependency file ('{}') for the nested \
                  dependency '{}' ('{}'): {}",
                 render_path(&path),
                 dep_name,
                 render_path(&dep_proj_path),
                 source,
-            );
+            )
         },
     }
 }
 
-fn print_install_proj_deps_error(
+fn render_install_proj_deps_error(
     err: InstallProjDepsError<GitCmdError>,
     dep_descr: &str,
-) {
+) -> String {
     match err {
         InstallProjDepsError::ReadStateFileFailed{source, path} =>
-            eprintln!(
+            format!(
                 "Couldn't read the state file ('{}'): {}",
                 render_path(&path),
                 source,
             ),
         InstallProjDepsError::ConvStateFileUtf8Failed{source, path} =>
-            eprintln!(
+            format!(
                 "The state file ('{}') contains an invalid UTF-8 sequence \
                  after byte {}",
                 render_path(&path),
                 source.utf8_error().valid_up_to(),
             ),
         InstallProjDepsError::ParseStateFileFailed{source, path} =>
-            eprintln!(
+            format!(
                 "The state file ('{}') is invalid ({}), please remove this \
                  file and try again",
                 render_path(&path),
                 render_parse_deps_error(source, &path, None),
             ),
         InstallProjDepsError::CreateMainOutputDirFailed{source, path} =>
-            eprintln!(
+            format!(
                 "Couldn't create {}, the main output directory: {}",
                 render_path(&path),
                 source,
             ),
         InstallProjDepsError::InstallDepsFailed{source} =>
-            print_install_deps_error(source, &dep_descr),
+            render_install_deps_error(source, &dep_descr),
     }
 }
 
-fn print_install_deps_error(
+fn render_install_deps_error(
     err: InstallDepsError<GitCmdError>,
     dep_descr: &str,
-) {
+) -> String {
     match err {
         InstallDepsError::RemoveOldDepOutputDirFailed{
             source,
             dep_name,
             path,
         } =>
-            eprintln!(
+            format!(
                 "Couldn't remove '{}', the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
@@ -774,13 +777,13 @@ fn print_install_deps_error(
             dep_name,
             state_file_path,
         } =>
-            print_write_cur_deps_err(
+            render_write_cur_deps_err(
                 source,
                 &state_file_path,
                 &format!("removing '{}'", dep_name),
             ),
         InstallDepsError::CreateDepOutputDirFailed{source, dep_name, path} =>
-            eprintln!(
+            format!(
                 "Couldn't create '{}', the output directory for the '{}' \
                  dependency: {}",
                 render_path(&path),
@@ -792,13 +795,13 @@ fn print_install_deps_error(
             dep_name,
             state_file_path,
         } =>
-            print_write_cur_deps_err(
+            render_write_cur_deps_err(
                 source,
                 &state_file_path,
                 &format!("installing '{}'", dep_name),
             ),
         InstallDepsError::WriteInitialCurDepsFailed{source, state_file_path} =>
-            print_write_cur_deps_err(
+            render_write_cur_deps_err(
                 source,
                 &state_file_path,
                 "updating dependencies",
@@ -806,7 +809,7 @@ fn print_install_deps_error(
         InstallDepsError::FetchFailed{source, dep_name} =>
             match source {
                 FetchError::RetrieveFailed{source} =>
-                    eprintln!(
+                    format!(
                         "Couldn't retrieve the source for the dependency \
                          '{}'{}: {}",
                         dep_name,
@@ -814,7 +817,7 @@ fn print_install_deps_error(
                         render_git_cmd_err(source),
                     ),
                 FetchError::VersionChangeFailed{source} =>
-                    eprintln!(
+                    format!(
                         "Couldn't change the version for the '{}' dependency: \
                          {}",
                         dep_name,
@@ -824,32 +827,29 @@ fn print_install_deps_error(
     }
 }
 
-fn print_parse_deps_conf_error(
+fn render_parse_deps_conf_error(
     err: ParseDepsConfError,
     deps_file_path: &PathBuf,
     dep_name: Option<String>,
-) {
+) -> String {
     match err {
         ParseDepsConfError::MissingOutputDir =>
             if let Some(name) = dep_name {
-                eprintln!(
+                format!(
                     "{}: This nested dependency file (for '{}') doesn't \
                      contain an output directory",
                     render_path(&deps_file_path),
                     name,
                 )
             } else {
-                eprintln!(
+                format!(
                     "{}: This dependency file doesn't contain an output \
                      directory",
                     render_path(&deps_file_path),
                 )
             },
         ParseDepsConfError::ParseDepsFailed{source} =>
-            eprintln!(
-                "{}",
-                render_parse_deps_error(source, &deps_file_path, dep_name),
-            ),
+            render_parse_deps_error(source, &deps_file_path, dep_name),
     }
 }
 
@@ -955,21 +955,21 @@ fn render_parse_deps_error(
     }
 }
 
-fn print_write_cur_deps_err(
+fn render_write_cur_deps_err(
     err: WriteStateFileError,
     state_file_path: &PathBuf,
     action: &str,
-) {
+) -> String {
     match err {
         WriteStateFileError::OpenFailed{source} =>
-            eprintln!(
+            format!(
                 "Couldn't open the state file ('{}') for writing after {}: {}",
                 render_path(state_file_path),
                 action,
                 source,
             ),
         WriteStateFileError::WriteDepLineFailed{source} =>
-            eprintln!(
+            format!(
                 "Couldn't write to the state file ('{}') after {}: {}",
                 render_path(state_file_path),
                 action,
