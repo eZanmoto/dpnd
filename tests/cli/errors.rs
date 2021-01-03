@@ -102,8 +102,8 @@ fn deps_file_invalid_utf8() {
         .code(1)
         .stdout("")
         .stderr(format!(
-            "{}/dpnd.txt: This dependency file contains an invalid UTF-8 \
-             sequence after byte 4\n",
+            "Couldn't read the dependency file at '{}/dpnd.txt': stream did \
+             not contain valid UTF-8\n",
             test_proj_dir,
         ));
 }

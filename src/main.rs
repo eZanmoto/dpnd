@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::process;
 use std::str;
 use std::str::Lines;
-use std::string::FromUtf8Error;
 
 mod dep_tools;
 
@@ -116,7 +115,7 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
     let cwd = env::current_dir()
         .context(GetCurrentDirFailed{})?;
 
-    let (proj_dir, deps_file_path, raw_deps_spec) =
+    let (proj_dir, deps_file_path, deps_spec) =
         match read_deps_file(cwd, &installer.deps_file_name) {
             Ok(maybe_v) => {
                 if let Some(v) = maybe_v {
@@ -130,15 +129,10 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
             },
         };
 
-    let mut projs = vec![(proj_dir, None, deps_file_path, raw_deps_spec)];
+    let mut projs = vec![(proj_dir, None, deps_file_path, deps_spec)];
 
     while let Some(proj) = projs.pop() {
-        let (proj_dir, dep_name, deps_file_path, raw_deps_spec) = proj;
-        let deps_spec = String::from_utf8(raw_deps_spec)
-            .with_context(|| ConvDepsFileUtf8Failed{
-                dep_name: dep_name.clone(),
-                path: deps_file_path.clone(),
-            })?;
+        let (proj_dir, dep_name, deps_file_path, deps_spec) = proj;
 
         let conf = parse_deps_conf(&installer, &deps_spec)
             .with_context(|| ParseDepsConfFailed{
@@ -157,19 +151,19 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
             let dep_proj_path = proj_dir.join(&conf.output_dir).join(dep_name);
             let dep_deps_file_path =
                 dep_proj_path.join(&installer.deps_file_name);
-            let maybe_raw_deps_spec = try_read(&dep_deps_file_path)
+            let maybe_deps_spec = try_read_to_string(&dep_deps_file_path)
                 .with_context(|| ReadNestedDepsFileFailed{
                     path: dep_deps_file_path.clone(),
                     dep_name,
                     dep_proj_path: dep_proj_path.clone(),
                 })?;
 
-            if let Some(raw_deps_spec) = maybe_raw_deps_spec {
+            if let Some(deps_spec) = maybe_deps_spec {
                 projs.push((
                     dep_proj_path,
                     Some(dep_name.to_string()),
                     dep_deps_file_path,
-                    raw_deps_spec,
+                    deps_spec,
                 ));
             }
         }
@@ -178,10 +172,12 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
     Ok(())
 }
 
-// `try_read` returns the contents of the file at `path`, or `None` if it
-// doesn't exist, or an error if one occurred.
-fn try_read<P: AsRef<Path>>(path: P) -> Result<Option<Vec<u8>>, IoError> {
-    match fs::read(path) {
+// `try_read_to_string` returns the contents of the file at `path`, or `None`
+// if it doesn't exist, or an error if one occurred.
+fn try_read_to_string<P: AsRef<Path>>(path: P)
+    -> Result<Option<String>, IoError>
+{
+    match fs::read_to_string(path) {
         Ok(conts) => {
             Ok(Some(conts))
         },
@@ -203,11 +199,6 @@ where
     GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
     ReadDepsFileFailed{source: ReadDepsFileError},
-    ConvDepsFileUtf8Failed{
-        source: FromUtf8Error,
-        path: PathBuf,
-        dep_name: Option<String>,
-    },
     ParseDepsConfFailed{
         source: ParseDepsConfError,
         path: PathBuf,
@@ -232,13 +223,13 @@ fn install_proj_deps<'a>(
 ) -> Result<(), InstallProjDepsError<GitCmdError>> {
     let output_dir = proj_dir.join(&conf.output_dir);
     let state_file_path = output_dir.join(&installer.state_file_name);
-    let (state_file_exists, state_file_conts) =
-        match try_read(&state_file_path) {
+    let (state_file_exists, state_spec) =
+        match try_read_to_string(&state_file_path) {
             Ok(maybe_conts) => {
                 if let Some(conts) = maybe_conts {
                     (true, conts)
                 } else {
-                    (false, vec![])
+                    (false, String::new())
                 }
             },
             Err(err) => {
@@ -248,11 +239,6 @@ fn install_proj_deps<'a>(
                 });
             },
         };
-
-    let state_spec = String::from_utf8(state_file_conts)
-        .with_context(
-            || ConvStateFileUtf8Failed{path: state_file_path.clone()}
-        )?;
 
     let cur_deps = parse_deps(&installer, &mut state_spec.lines().enumerate())
         .with_context(|| ParseStateFileFailed{path: state_file_path.clone()})?;
@@ -279,7 +265,6 @@ where
     E: Error + 'static
 {
     ReadStateFileFailed{source: IoError, path: PathBuf},
-    ConvStateFileUtf8Failed{source: FromUtf8Error, path: PathBuf},
     ParseStateFileFailed{source: ParseDepsError, path: PathBuf},
     CreateMainOutputDirFailed{source: IoError, path: PathBuf},
     InstallDepsFailed{source: InstallDepsError<E>},
@@ -289,13 +274,13 @@ where
 // deepest of `start`s ancestor directories that contains a file named
 // `deps_file_name`.
 fn read_deps_file(start: PathBuf, deps_file_name: &str)
-    -> Result<Option<(PathBuf, PathBuf, Vec<u8>)>, ReadDepsFileError>
+    -> Result<Option<(PathBuf, PathBuf, String)>, ReadDepsFileError>
 {
     let mut dir = start;
     loop {
         let deps_file_path = dir.clone().join(deps_file_name);
 
-        match try_read(&deps_file_path) {
+        match try_read_to_string(&deps_file_path) {
             Ok(Some(conts)) => {
                 return Ok(Some((dir, deps_file_path, conts)));
             },
@@ -668,24 +653,6 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                 source,
             );
         },
-        InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} => {
-            if let Some(name) = dep_name {
-                eprintln!(
-                    "{}: This nested dependency file (for '{}') contains an \
-                     invalid UTF-8 sequence after byte {}",
-                    render_path(&path),
-                    source.utf8_error().valid_up_to(),
-                    name,
-                );
-            } else {
-                eprintln!(
-                    "{}: This dependency file contains an invalid UTF-8 \
-                     sequence after byte {}",
-                    render_path(&path),
-                    source.utf8_error().valid_up_to(),
-                );
-            }
-        },
         InstallError::ParseDepsConfFailed{source, path, dep_name} => {
             print_parse_deps_conf_error(source, &path, dep_name);
         },
@@ -726,13 +693,6 @@ fn print_install_proj_deps_error(
                 "Couldn't read the state file ('{}'): {}",
                 render_path(&path),
                 source,
-            ),
-        InstallProjDepsError::ConvStateFileUtf8Failed{source, path} =>
-            eprintln!(
-                "The state file ('{}') contains an invalid UTF-8 sequence \
-                 after byte {}",
-                render_path(&path),
-                source.utf8_error().valid_up_to(),
             ),
         InstallProjDepsError::ParseStateFileFailed{source, path} =>
             eprintln!(
