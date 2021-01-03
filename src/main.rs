@@ -326,20 +326,18 @@ fn parse_deps_conf<'a>(installer: &Installer<'a, GitCmdError>, conts: &str)
 {
     let mut lines = conts.lines().enumerate();
 
-    if let Some(output_dir) = parse_output_dir(&mut lines) {
-        Ok(DepsConf {
-            output_dir,
-            deps: parse_deps(&installer, &mut lines)
-                .context(ParseDepsFailed{})?,
-        })
-    } else {
-        Err(ParseDepsConfError::MissingOutputDir)
-    }
+    let output_dir = parse_output_dir(&mut lines)
+        .context(ParseOutputDirFailed{})?;
+
+    let deps = parse_deps(&installer, &mut lines)
+        .context(ParseDepsFailed{})?;
+
+    Ok(DepsConf{output_dir, deps})
 }
 
 #[derive(Debug, Snafu)]
 enum ParseDepsConfError {
-    MissingOutputDir,
+    ParseOutputDirFailed{source: ParseOutputDirError},
     ParseDepsFailed{source: ParseDepsError},
 }
 
@@ -348,23 +346,37 @@ struct DepsConf<'a, E> {
     deps: HashMap<String, Dependency<'a, E>>,
 }
 
-fn parse_output_dir(lines: &mut Enumerate<Lines>) -> Option<PathBuf> {
-    for (_, line) in lines {
+fn parse_output_dir(lines: &mut Enumerate<Lines>)
+    -> Result<PathBuf, ParseOutputDirError>
+{
+    for (i, line) in lines {
         let ln = line.trim_start();
         if !conf_line_is_skippable(ln) {
             let mut path = PathBuf::new();
             for part in ln.split('/') {
+                if part == "." || part == ".." {
+                    return Err(ParseOutputDirError::InvalidPart{
+                        ln_num: i + 1,
+                        part: part.to_string(),
+                    });
+                }
                 path.push(part);
             }
-            return Some(path);
+            return Ok(path);
         }
     }
 
-    None
+    Err(ParseOutputDirError::MissingOutputDir)
 }
 
 fn conf_line_is_skippable(ln: &str) -> bool {
     ln.is_empty() || ln.starts_with('#')
+}
+
+#[derive(Debug, Snafu)]
+enum ParseOutputDirError {
+    MissingOutputDir,
+    InvalidPart{ln_num: usize, part: String},
 }
 
 fn parse_deps<'a>(
@@ -833,20 +845,43 @@ fn render_parse_deps_conf_error(
     dep_name: Option<String>,
 ) -> String {
     match err {
-        ParseDepsConfError::MissingOutputDir =>
-            if let Some(name) = dep_name {
-                format!(
-                    "{}: This nested dependency file (for '{}') doesn't \
-                     contain an output directory",
-                    render_path(&deps_file_path),
-                    name,
-                )
-            } else {
-                format!(
-                    "{}: This dependency file doesn't contain an output \
-                     directory",
-                    render_path(&deps_file_path),
-                )
+        ParseDepsConfError::ParseOutputDirFailed{source} =>
+            match source {
+                ParseOutputDirError::MissingOutputDir =>
+                    if let Some(name) = dep_name {
+                        format!(
+                            "{}: This nested dependency file (for '{}') \
+                             doesn't contain an output directory",
+                            render_path(&deps_file_path),
+                            name,
+                        )
+                    } else {
+                        format!(
+                            "{}: This dependency file doesn't contain an \
+                             output directory",
+                            render_path(&deps_file_path),
+                        )
+                    },
+                ParseOutputDirError::InvalidPart{ln_num, part} =>
+                    if let Some(name) = dep_name {
+                        format!(
+                            "{}:{}: This nested dependency file (for '{}') \
+                             contains an invalid component ('{}') in its \
+                             output directory",
+                            render_path(&deps_file_path),
+                            ln_num,
+                            name,
+                            part,
+                        )
+                    } else {
+                        format!(
+                            "{}:{}: This dependency file contains an invalid \
+                             component ('{}') in its output directory",
+                            render_path(&deps_file_path),
+                            ln_num,
+                            part,
+                        )
+                    },
             },
         ParseDepsConfError::ParseDepsFailed{source} =>
             render_parse_deps_error(source, &deps_file_path, dep_name),

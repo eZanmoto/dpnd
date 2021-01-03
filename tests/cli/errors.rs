@@ -355,3 +355,103 @@ fn invalid_dep_name() {
             test_proj_dir,
         ));
 }
+
+#[test]
+// Given the dependency file specifies an output directory that starts with a
+//     relative reference
+// When the command is run
+// Then the command fails with an error
+fn output_dir_starts_with_relative_ref() {
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+        "output_dir_starts_with_relative_ref",
+        indoc!{"
+            ./deps
+        "},
+    );
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/dpnd.txt:1: This dependency file contains an invalid \
+             component ('.') in its output directory\n",
+            test_proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file specifies an output directory that starts with a
+//     backwards reference
+// When the command is run
+// Then the command fails with an error
+fn output_dir_starts_with_back_ref() {
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+        "output_dir_starts_with_back_ref",
+        indoc!{"
+            ../deps
+        "},
+    );
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/dpnd.txt:1: This dependency file contains an invalid \
+             component ('..') in its output directory\n",
+            test_proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file specifies an output directory with a relative
+//     reference
+// When the command is run
+// Then the command fails with an error
+fn output_dir_contains_relative_ref() {
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+        "output_dir_contains_relative_ref",
+        indoc!{"
+            target/./deps
+        "},
+    );
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/dpnd.txt:1: This dependency file contains an invalid \
+             component ('.') in its output directory\n",
+            test_proj_dir,
+        ));
+}
+
+#[test]
+// Given the dependency file specifies an output directory with a backwards
+//     reference
+// When the command is run
+// Then the command fails with an error
+fn output_dir_contains_back_ref() {
+    let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
+        "output_dir_contains_back_ref",
+        indoc!{"
+            target/../deps
+        "},
+    );
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "{}/dpnd.txt:1: This dependency file contains an invalid \
+             component ('..') in its output directory\n",
+            test_proj_dir,
+        ));
+}
