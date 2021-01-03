@@ -30,20 +30,6 @@ fn missing_deps_file() {
         );
 }
 
-fn setup_test_with_deps_file<C: AsRef<[u8]>>(
-    root_test_dir_name: &str,
-    conts: C,
-)
-    -> AssertCommand
-{
-    let root_test_dir = test_setup::create_root_dir(root_test_dir_name);
-    let test_proj_dir = test_setup::create_dir(root_test_dir, "proj");
-    fs::write(format!("{}/dpnd.txt", test_proj_dir), conts)
-        .expect("couldn't write dependency file");
-
-    test_setup::new_test_cmd(test_proj_dir)
-}
-
 #[test]
 // Given the dependency file is a directory
 // When the command is run
@@ -81,6 +67,20 @@ fn empty_deps_file() {
             "dpnd.txt: This dependency file doesn't contain an output \
              directory\n",
         );
+}
+
+fn setup_test_with_deps_file<C: AsRef<[u8]>>(
+    root_test_dir_name: &str,
+    conts: C,
+)
+    -> AssertCommand
+{
+    let root_test_dir = test_setup::create_root_dir(root_test_dir_name);
+    let test_proj_dir = test_setup::create_dir(root_test_dir, "proj");
+    fs::write(format!("{}/dpnd.txt", test_proj_dir), conts)
+        .expect("couldn't write dependency file");
+
+    test_setup::new_test_cmd(test_proj_dir)
 }
 
 #[test]
