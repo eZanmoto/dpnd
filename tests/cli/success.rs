@@ -38,13 +38,11 @@ fn new_dep_vsn_pulled_correctly() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),
@@ -110,13 +108,11 @@ fn old_dep_vsn_pulled_correctly() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello world'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello world'"),
                 }),
             }),
         }),
@@ -153,12 +149,58 @@ fn run_in_proj_subdir() {
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
             "sub" => Node::Dir(hashmap!{}),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
+                }),
+            }),
+        }),
+    );
+}
+
+#[test]
+// Given the output directory is a subdirectory of another directory
+// When the command is run
+// Then dependencies are pulled to the correct locations
+fn output_dir_is_subdir() {
+    let test_deps = test_deps();
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+        test_setup::create("output_dir_is_subdir", &test_deps, &hashmap!{});
+    let deps_file_conts = formatdoc!{
+        "
+            # This is the output directory.
+            target/deps
+
+            # These are the dependencies.
+            my_scripts git git://localhost/my_scripts.git {}
+        ",
+        deps_commit_hashes["my_scripts"][0],
+    };
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
+    fs::write(&deps_file, &deps_file_conts)
+        .expect("couldn't write dependency file");
+    let cmd_result = test_setup::with_git_server(
+        dep_srcs_dir,
+        || {
+            let mut cmd = test_setup::new_test_cmd(proj_dir.clone());
+
+            cmd.assert()
+        },
+    );
+
+    cmd_result.code(0).stdout("").stderr("");
+    fs_check::assert_contents(
+        &proj_dir,
+        &Node::Dir(hashmap!{
+            "dpnd.txt" => Node::File(&deps_file_conts),
             "target" => Node::Dir(hashmap!{
                 "deps" => Node::Dir(hashmap!{
                     "current_dpnd.txt" => Node::AnyFile,
                     "my_scripts" => Node::Dir(hashmap!{
                         ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
+                        "script.sh" => Node::File("echo 'hello world'"),
                     }),
                 }),
             }),
@@ -197,13 +239,11 @@ fn tool_is_idempotent() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),
@@ -243,13 +283,11 @@ fn add_first_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),
@@ -302,9 +340,7 @@ fn run_tool(
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(deps_output_dir),
-            }),
+            "deps" => Node::Dir(deps_output_dir),
         }),
     );
 }
@@ -345,17 +381,15 @@ fn add_second_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
-                    "your_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, sun!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
+                }),
+                "your_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, sun!'"),
                 }),
             }),
         }),
@@ -402,21 +436,19 @@ fn add_third_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
-                    "your_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, sun!'"),
-                    }),
-                    "their_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, moon!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
+                }),
+                "your_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, sun!'"),
+                }),
+                "their_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, moon!'"),
                 }),
             }),
         }),
@@ -462,17 +494,15 @@ fn rm_third_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
-                    "your_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, sun!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
+                }),
+                "your_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, sun!'"),
                 }),
             }),
         }),
@@ -514,13 +544,11 @@ fn rm_second_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),
@@ -559,10 +587,8 @@ fn rm_first_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
             }),
         }),
     );
@@ -610,13 +636,11 @@ fn add_after_rm() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),
@@ -656,13 +680,11 @@ fn upgrade_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),
@@ -702,13 +724,11 @@ fn downgrade_dep() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello world'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello world'"),
                 }),
             }),
         }),
@@ -728,7 +748,7 @@ fn same_dep_diff_vsns() {
     let deps_file_conts = formatdoc!{
         "
             # This is the output directory.
-            target/deps
+            deps
 
             # These are the dependencies.
             my_scripts_v1 git git://localhost/my_scripts.git {}
@@ -754,17 +774,15 @@ fn same_dep_diff_vsns() {
         &proj_dir,
         &Node::Dir(hashmap!{
             "dpnd.txt" => Node::File(&deps_file_conts),
-            "target" => Node::Dir(hashmap!{
-                "deps" => Node::Dir(hashmap!{
-                    "current_dpnd.txt" => Node::AnyFile,
-                    "my_scripts_v1" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello world'"),
-                    }),
-                    "my_scripts_v2" => Node::Dir(hashmap!{
-                        ".git" => Node::AnyDir,
-                        "script.sh" => Node::File("echo 'hello, world!'"),
-                    }),
+            "deps" => Node::Dir(hashmap!{
+                "current_dpnd.txt" => Node::AnyFile,
+                "my_scripts_v1" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello world'"),
+                }),
+                "my_scripts_v2" => Node::Dir(hashmap!{
+                    ".git" => Node::AnyDir,
+                    "script.sh" => Node::File("echo 'hello, world!'"),
                 }),
             }),
         }),

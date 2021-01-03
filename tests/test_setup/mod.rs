@@ -170,7 +170,7 @@ pub fn write_test_deps_file(
     let mut deps_file_conts = formatdoc!{
         "
             # This is the output directory.
-            target/deps
+            deps
 
             # These are the dependencies.
         ",

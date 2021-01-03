@@ -114,7 +114,7 @@ fn assert_nested_dep_contents(
 // Then the command fails with an error
 fn deps_file_invalid_dep_in_nested_dep() {
     let nested_deps_file_conts = indoc!{"
-        target/deps
+        deps
 
         proj tool source version extra
     "};
@@ -154,7 +154,7 @@ fn deps_file_invalid_dep_in_nested_dep() {
 // Then the command fails with an error
 fn deps_file_invalid_tool_in_nested_dep() {
     let nested_deps_file_conts = indoc!{"
-        target/deps
+        deps
 
         proj tool source version
     "};

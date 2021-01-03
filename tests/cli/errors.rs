@@ -116,7 +116,7 @@ fn deps_file_invalid_dep() {
     let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_dep",
         indoc!{"
-            target/deps
+            deps
 
             proj tool source version extra
         "},
@@ -142,7 +142,7 @@ fn deps_file_invalid_tool() {
     let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "deps_file_invalid_tool",
         indoc!{"
-            target/deps
+            deps
 
             proj tool source version
         "},
@@ -168,7 +168,7 @@ fn unavailable_git_proj_src() {
     let (_, mut cmd) = setup_test_with_deps_file(
         "unavailable_git_proj_src",
         indoc!{"
-            target/deps
+            deps
 
             proj git git://localhost/my_scripts.git master
         "},
@@ -212,7 +212,7 @@ fn unavailable_git_proj_vsn() {
     );
     let test_proj_dir = test_setup::create_dir(root_test_dir.clone(), "proj");
     let deps_file_conts = indoc!{"
-        target/deps
+        deps
 
         my_scripts git git://localhost/my_scripts.git bad_commit
     "};
@@ -250,9 +250,9 @@ fn unavailable_git_proj_vsn() {
 fn main_output_dir_is_file() {
     let root_test_dir = test_setup::create_root_dir("main_output_dir_is_file");
     let test_proj_dir = test_setup::create_dir(root_test_dir, "proj");
-    fs::write(test_proj_dir.to_string() + "/target", "")
+    fs::write(test_proj_dir.to_string() + "/deps", "")
         .expect("couldn't write dummy target file");
-    let deps_file_conts = "target/deps\n";
+    let deps_file_conts = "deps\n";
     fs::write(test_proj_dir.to_string() + "/dpnd.txt", &deps_file_conts)
         .expect("couldn't write dependency file");
     let mut cmd = test_setup::new_test_cmd(test_proj_dir.clone());
@@ -263,9 +263,8 @@ fn main_output_dir_is_file() {
         .code(1)
         .stdout("")
         .stderr(format!(
-            "Couldn't read the state file \
-             ('{}/target/deps/current_dpnd.txt'): Not a directory (os error \
-             20)\n",
+            "Couldn't read the state file ('{}/deps/current_dpnd.txt'): Not a \
+             directory (os error 20)\n",
             test_proj_dir,
         ));
 }
@@ -310,7 +309,7 @@ fn dup_dep_names() {
     let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "dup_dep_names",
         indoc!{"
-            target/deps
+            deps
 
             my_scripts git git://localhost/my_scripts.git master
             my_scripts git git://localhost/my_scripts.git master
@@ -337,7 +336,7 @@ fn invalid_dep_name() {
     let (test_proj_dir, mut cmd) = setup_test_with_deps_file(
         "invalid_dep_name",
         indoc!{"
-            target/deps
+            deps
 
             my_scripts? git git://localhost/my_scripts.git master
         "},
