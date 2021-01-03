@@ -221,21 +221,22 @@ fn install_proj_deps<'a>(
 ) -> Result<(), InstallProjDepsError<GitCmdError>> {
     let output_dir = proj_dir.join(&conf.output_dir);
     let state_file_path = output_dir.join(&installer.state_file_name);
-    let state_file_conts = match fs::read(&state_file_path) {
-        Ok(conts) => {
-            conts
-        },
-        Err(err) => {
-            if err.kind() == ErrorKind::NotFound {
-                vec![]
-            } else {
-                return Err(InstallProjDepsError::ReadStateFileFailed{
-                    source: err,
-                    path: state_file_path,
-                });
-            }
-        },
-    };
+    let (state_file_exists, state_file_conts) =
+        match fs::read(&state_file_path) {
+            Ok(conts) => {
+                (true, conts)
+            },
+            Err(err) => {
+                if err.kind() == ErrorKind::NotFound {
+                    (false, vec![])
+                } else {
+                    return Err(InstallProjDepsError::ReadStateFileFailed{
+                        source: err,
+                        path: state_file_path,
+                    });
+                }
+            },
+        };
 
     let state_spec = String::from_utf8(state_file_conts)
         .with_context(
@@ -248,7 +249,13 @@ fn install_proj_deps<'a>(
     fs::create_dir_all(&output_dir)
         .with_context(|| CreateMainOutputDirFailed{path: output_dir.clone()})?;
 
-    install_deps(&output_dir, state_file_path, cur_deps, conf.deps.clone())
+    install_deps(
+        &output_dir,
+        state_file_path,
+        state_file_exists,
+        cur_deps,
+        conf.deps.clone(),
+    )
         .context(InstallDepsFailed{})?;
 
     Ok(())
@@ -444,12 +451,21 @@ enum ParseDepsError {
 fn install_deps<'a>(
     output_dir: &PathBuf,
     state_file_path: PathBuf,
+    state_file_exists: bool,
     mut cur_deps: HashMap<String, Dependency<'a, GitCmdError>>,
     mut new_deps: HashMap<String, Dependency<'a, GitCmdError>>,
 )
     -> Result<(), InstallDepsError<GitCmdError>>
 {
     let mut actions = actions(&cur_deps, &new_deps);
+
+    if actions.is_empty() {
+        if !state_file_exists {
+            write_state_file(&state_file_path, &cur_deps)
+                .context(WriteInitialCurDepsFailed{state_file_path})?;
+        }
+        return Ok(());
+    }
 
     while let Some((act, dep_name)) = actions.pop() {
         let dir = output_dir.join(&dep_name);
@@ -502,10 +518,6 @@ fn install_deps<'a>(
             })?;
     }
 
-    // We write the state file one final time in case there were no actions.
-    write_state_file(&state_file_path, &cur_deps)
-        .context(FinalWriteCurDepsFailed{state_file_path})?;
-
     Ok(())
 }
 
@@ -515,6 +527,10 @@ enum InstallDepsError<E>
 where
     E: Error + 'static
 {
+    WriteInitialCurDepsFailed{
+        source: WriteStateFileError,
+        state_file_path: PathBuf,
+    },
     RemoveOldDepOutputDirFailed{
         source: IoError,
         dep_name: String,
@@ -529,10 +545,6 @@ where
     WriteCurDepsAfterInstallFailed{
         source: WriteStateFileError,
         dep_name: String,
-        state_file_path: PathBuf,
-    },
-    FinalWriteCurDepsFailed{
-        source: WriteStateFileError,
         state_file_path: PathBuf,
     },
     FetchFailed{source: FetchError<E>, dep_name: String},
@@ -749,7 +761,7 @@ fn print_install_deps_error(
                 &state_file_path,
                 &format!("installing '{}'", dep_name),
             ),
-        InstallDepsError::FinalWriteCurDepsFailed{source, state_file_path} =>
+        InstallDepsError::WriteInitialCurDepsFailed{source, state_file_path} =>
             print_write_cur_deps_err(
                 source,
                 &state_file_path,
