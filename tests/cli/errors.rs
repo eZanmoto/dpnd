@@ -45,6 +45,28 @@ fn setup_test_with_deps_file<C: AsRef<[u8]>>(
 }
 
 #[test]
+// Given the dependency file is a directory
+// When the command is run
+// Then the command fails with an error
+fn directory_as_deps_file() {
+    let root_test_dir = test_setup::create_root_dir("directory_as_deps_file");
+    let test_proj_dir = test_setup::create_dir(root_test_dir, "proj");
+    test_setup::create_dir(test_proj_dir.clone(), "dpnd.txt");
+    let mut cmd = test_setup::new_test_cmd(test_proj_dir.clone());
+
+    let cmd_result = cmd.assert();
+
+    cmd_result
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "Couldn't read the dependency file at '{}/dpnd.txt': Is a \
+             directory (os error 21)\n",
+            test_proj_dir,
+        ));
+}
+
+#[test]
 // Given the dependency file is empty
 // When the command is run
 // Then the command fails with an error

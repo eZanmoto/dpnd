@@ -118,8 +118,16 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
 
     let (proj_dir, deps_file_path, raw_deps_spec) =
         match read_deps_file(cwd, &installer.deps_file_name) {
-            Some(v) => v,
-            None => return Err(InstallError::NoDepsFileFound),
+            Ok(maybe_v) => {
+                if let Some(v) = maybe_v {
+                    v
+                } else {
+                    return Err(InstallError::NoDepsFileFound);
+                }
+            },
+            Err(err) => {
+                return Err(InstallError::ReadDepsFileFailed{source: err});
+            },
         };
 
     let mut projs = vec![(proj_dir, None, deps_file_path, raw_deps_spec)];
@@ -170,6 +178,8 @@ fn install(installer: &Installer<GitCmdError>, recurse: bool)
     Ok(())
 }
 
+// `try_read` returns the contents of the file at `path`, or `None` if it
+// doesn't exist, or an error if one occurred.
 fn try_read<P: AsRef<Path>>(path: P) -> Result<Option<Vec<u8>>, IoError> {
     match fs::read(path) {
         Ok(conts) => {
@@ -192,6 +202,7 @@ where
 {
     GetCurrentDirFailed{source: IoError},
     NoDepsFileFound,
+    ReadDepsFileFailed{source: ReadDepsFileError},
     ConvDepsFileUtf8Failed{
         source: FromUtf8Error,
         path: PathBuf,
@@ -222,19 +233,19 @@ fn install_proj_deps<'a>(
     let output_dir = proj_dir.join(&conf.output_dir);
     let state_file_path = output_dir.join(&installer.state_file_name);
     let (state_file_exists, state_file_conts) =
-        match fs::read(&state_file_path) {
-            Ok(conts) => {
-                (true, conts)
+        match try_read(&state_file_path) {
+            Ok(maybe_conts) => {
+                if let Some(conts) = maybe_conts {
+                    (true, conts)
+                } else {
+                    (false, vec![])
+                }
             },
             Err(err) => {
-                if err.kind() == ErrorKind::NotFound {
-                    (false, vec![])
-                } else {
-                    return Err(InstallProjDepsError::ReadStateFileFailed{
-                        source: err,
-                        path: state_file_path,
-                    });
-                }
+                return Err(InstallProjDepsError::ReadStateFileFailed{
+                    source: err,
+                    path: state_file_path,
+                });
             },
         };
 
@@ -278,19 +289,35 @@ where
 // deepest of `start`s ancestor directories that contains a file named
 // `deps_file_name`.
 fn read_deps_file(start: PathBuf, deps_file_name: &str)
-    -> Option<(PathBuf, PathBuf, Vec<u8>)>
+    -> Result<Option<(PathBuf, PathBuf, Vec<u8>)>, ReadDepsFileError>
 {
     let mut dir = start;
     loop {
         let deps_file_path = dir.clone().join(deps_file_name);
-        if let Ok(conts) = fs::read(&deps_file_path) {
-            return Some((dir, deps_file_path, conts));
+
+        match try_read(&deps_file_path) {
+            Ok(Some(conts)) => {
+                return Ok(Some((dir, deps_file_path, conts)));
+            },
+            Ok(None) => {
+            },
+            Err(err) => {
+                return Err(ReadDepsFileError::ReadFailed{
+                    source: err,
+                    deps_file_path,
+                });
+            },
         }
 
         if !dir.pop() {
-            return None;
+            return Ok(None);
         }
     }
+}
+
+#[derive(Debug, Snafu)]
+enum ReadDepsFileError {
+    ReadFailed{source: IoError, deps_file_path: PathBuf},
 }
 
 fn parse_deps_conf<'a>(installer: &Installer<'a, GitCmdError>, conts: &str)
@@ -630,6 +657,15 @@ fn print_install_error(err: InstallError<GitCmdError>, deps_file_name: &str) {
                 "Couldn't find the dependency file '{}' in the current \
                  directory or parent directories",
                 deps_file_name,
+            );
+        },
+        InstallError::ReadDepsFileFailed{
+            source: ReadDepsFileError::ReadFailed{source, deps_file_path},
+        } => {
+            eprintln!(
+                "Couldn't read the dependency file at '{}': {}",
+                render_path(&deps_file_path),
+                source,
             );
         },
         InstallError::ConvDepsFileUtf8Failed{source, path, dep_name} => {
