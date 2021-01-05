@@ -1,0 +1,4 @@
+[build.env]
+# See `scripts/cross.Dockerfile` for more details on the `TEST_DIR` variable to
+# be passed through `cross`.
+passthrough = ["TEST_DIR"]
