@@ -74,7 +74,7 @@ pub fn create_dir(dir: String, name: &str) -> String {
     let path = dir + "/" + name;
 
     fs::create_dir(&path)
-        .expect("couldn't create directory");
+        .expect(&format!("couldn't create directory: {}", path));
 
     path
 }
@@ -129,25 +129,32 @@ pub fn create_bare_git_repo(
     run_cmd(scratch_dir, "git", git_args);
 }
 
-pub fn run_cmd<I, S>(dir: &str, cmd: &str, args: I) -> String
+pub fn run_cmd<I, S>(dir: &str, prog: &str, args: I) -> String
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(cmd)
+    let mut cmd = Command::new(prog);
+    let output = cmd
         .args(args)
         .current_dir(dir)
         .env_clear()
         .output()
         .unwrap_or_else(|_|
-            panic!("couldn't run `{}`", cmd)
+            panic!("couldn't run `{:?}`", cmd)
         );
 
-    assert!(output.status.success(), "`{}` failed", cmd);
+    assert!(
+        output.status.success(),
+        "`{:?}` failed:\n{}\n{}",
+        cmd,
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    );
 
     String::from_utf8(output.stdout)
         .unwrap_or_else(|_|
-            panic!("couldn't convert `{}` output to `String`", cmd)
+            panic!("couldn't convert `{:?}` output to `String`", cmd)
         )
 }
 
