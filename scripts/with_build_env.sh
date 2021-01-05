@@ -1,9 +1,10 @@
-# Copyright 2020 Sean Kelleher. All rights reserved.
+# Copyright 2020-2021 Sean Kelleher. All rights reserved.
 # Use of this source code is governed by an MIT
 # licence that can be found in the LICENCE file.
 
+# `$0` runs a command in the build environment.
+
 set -o errexit
-set -o pipefail
 
 build_img='dpnd.build'
 
