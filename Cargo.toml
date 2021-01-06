@@ -11,7 +11,7 @@ license = "MIT"
 name = "dpnd"
 readme = "README.md"
 repository = "https://github.com/ezanmoto/dpnd"
-version = "0.1.14"
+version = "0.1.15"
 
 [dependencies]
 clap = "2.33.3"
