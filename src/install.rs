@@ -103,7 +103,9 @@ impl<'a> Installer<'a, GitCmdError> {
         &self,
         proj_dir: &PathBuf,
         conf: &DepsConf<'b, GitCmdError>,
-    ) -> Result<(), InstallProjDepsError<GitCmdError>> {
+    )
+        -> Result<(), InstallProjDepsError<GitCmdError>>
+    {
         let output_dir = proj_dir.join(&conf.output_dir);
         let state_file_path = output_dir.join(&self.state_file_name);
         let (state_file_exists, state_file_conts) =

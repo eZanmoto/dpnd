@@ -92,7 +92,9 @@ fn render_install_proj_deps_error(
     err: InstallProjDepsError<GitCmdError>,
     cwd: &PathBuf,
     dep_descr: &str,
-) -> String {
+)
+    -> String
+{
     match err {
         InstallProjDepsError::ReadStateFileFailed{source, path} =>
             format!(
@@ -129,7 +131,9 @@ fn render_install_deps_error(
     err: InstallDepsError<GitCmdError>,
     cwd: &PathBuf,
     dep_descr: &str,
-) -> String {
+)
+    -> String
+{
     match err {
         InstallDepsError::RemoveOldDepOutputDirFailed{
             source,
@@ -206,7 +210,9 @@ fn render_parse_deps_conf_error(
     cwd: &PathBuf,
     deps_file_path: &PathBuf,
     dep_name: Option<String>,
-) -> String {
+)
+    -> String
+{
     match err {
         ParseDepsConfError::ParseOutputDirFailed{source} =>
             match source {
@@ -256,7 +262,9 @@ fn render_parse_deps_error(
     cwd: &PathBuf,
     file_path: &PathBuf,
     proj_name: Option<String>,
-) -> String {
+)
+    -> String
+{
     match err {
         ParseDepsError::DupDepName{ln_num, dep_name, orig_ln_num} => {
             if let Some(name) = proj_name {
@@ -359,7 +367,9 @@ fn render_write_cur_deps_err(
     cwd: &PathBuf,
     state_file_path: &PathBuf,
     action: &str,
-) -> String {
+)
+    -> String
+{
     match err {
         WriteStateFileError::OpenFailed{source} =>
             format!(
