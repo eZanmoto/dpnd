@@ -29,7 +29,8 @@ check_lint:
 			-- \
 			-D warnings \
 			-D clippy::pedantic \
-			-D clippy::cargo
+			-D clippy::cargo \
+			-A clippy::module-name-repetitions
 	python3 scripts/check_line_length.py \
 		'**/*.rs' \
 		79
