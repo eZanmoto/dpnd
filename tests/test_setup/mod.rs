@@ -74,7 +74,7 @@ pub fn create_dir(dir: String, name: &str) -> String {
     let path = dir + "/" + name;
 
     fs::create_dir(&path)
-        .expect(&format!("couldn't create directory: {}", path));
+        .unwrap_or_else(|_| panic!("couldn't create directory: {}", path));
 
     path
 }
