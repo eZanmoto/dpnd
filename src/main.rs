@@ -8,6 +8,7 @@ use std::process;
 
 mod dep_tools;
 mod install;
+mod render_errors;
 
 use dep_tools::DepTool;
 use dep_tools::Git;
@@ -84,7 +85,7 @@ fn main() {
                 sub_args.is_present(install_recursive_flag),
             );
             if let Err(err) = install_result {
-                let msg = install::render_install_error(
+                let msg = render_errors::render_install_error(
                     err,
                     &cwd,
                     &deps_file_name,
