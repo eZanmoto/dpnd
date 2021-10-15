@@ -20,7 +20,7 @@ fn empty_deps_file_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
         create_nested_test_setup(
             "empty_deps_file_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,
@@ -42,7 +42,7 @@ fn empty_deps_file_in_nested_dep() {
     assert_nested_dep_contents(
         &proj_dir,
         &deps_file_conts,
-        &nested_deps_file_conts,
+        nested_deps_file_conts,
     );
 }
 
@@ -91,14 +91,14 @@ fn assert_nested_dep_contents(
     nested_deps_file_conts: &str,
 ) {
     fs_check::assert_contents(
-        &proj_dir,
+        proj_dir,
         &Node::Dir(hashmap!{
-            "dpnd.txt" => Node::File(&deps_file_conts),
+            "dpnd.txt" => Node::File(deps_file_conts),
             "deps" => Node::Dir(hashmap!{
                 "current_dpnd.txt" => Node::AnyFile,
                 "bad_dep" => Node::Dir(hashmap!{
                     ".git" => Node::AnyDir,
-                    "dpnd.txt" => Node::File(&nested_deps_file_conts),
+                    "dpnd.txt" => Node::File(nested_deps_file_conts),
                     "script.sh" => Node::File("echo 'bad!'"),
                 }),
             }),
@@ -120,7 +120,7 @@ fn deps_file_invalid_dep_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
         create_nested_test_setup(
             "deps_file_invalid_dep_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,
@@ -142,7 +142,7 @@ fn deps_file_invalid_dep_in_nested_dep() {
     assert_nested_dep_contents(
         &proj_dir,
         &deps_file_conts,
-        &nested_deps_file_conts,
+        nested_deps_file_conts,
     );
 }
 
@@ -159,7 +159,7 @@ fn deps_file_invalid_tool_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, deps_file_conts} =
         create_nested_test_setup(
             "deps_file_invalid_tool_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,
@@ -182,7 +182,7 @@ fn deps_file_invalid_tool_in_nested_dep() {
     assert_nested_dep_contents(
         &proj_dir,
         &deps_file_conts,
-        &nested_deps_file_conts,
+        nested_deps_file_conts,
     );
 }
 
@@ -200,7 +200,7 @@ fn unavailable_git_proj_src_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
         create_nested_test_setup(
             "unavailable_git_proj_src_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,
@@ -244,7 +244,7 @@ fn dup_dep_names_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
         create_nested_test_setup(
             "dup_dep_names_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,
@@ -279,7 +279,7 @@ fn invalid_dep_name_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
         create_nested_test_setup(
             "invalid_dep_name_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,
@@ -315,7 +315,7 @@ fn reserved_dep_name_in_nested_dep() {
     let NestedTestSetup{dep_srcs_dir, proj_dir, ..} =
         create_nested_test_setup(
             "reserved_dep_name_in_nested_dep",
-            &nested_deps_file_conts,
+            nested_deps_file_conts,
         );
     let cmd_result = test_setup::with_git_server(
         dep_srcs_dir,

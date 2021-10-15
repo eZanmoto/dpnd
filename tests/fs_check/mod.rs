@@ -25,11 +25,9 @@ pub fn assert_contents<'a>(path: &str, exp: &Node<'a>) {
 
             assert!(
                 exp_conts.as_bytes().to_vec() == act_conts,
-                format!(
-                    "'{}' contained unexpected data, expected:\n{}",
-                    &path,
-                    exp_conts,
-                ),
+                "'{}' contained unexpected data, expected:\n{}",
+                &path,
+                exp_conts,
             );
         }
         Node::AnyDir => {
@@ -90,12 +88,10 @@ pub fn assert_contents<'a>(path: &str, exp: &Node<'a>) {
 
             for exp_entry_name in exp_entries.keys() {
                 assert!(
-                    act_entry_names.contains::<str>(&exp_entry_name),
-                    format!(
-                        "couldn't find expected entry '{}/{}' in filesystem",
-                        path,
-                        exp_entry_name,
-                    ),
+                    act_entry_names.contains::<str>(exp_entry_name),
+                    "couldn't find expected entry '{}/{}' in filesystem",
+                    path,
+                    exp_entry_name,
                 );
             }
         }

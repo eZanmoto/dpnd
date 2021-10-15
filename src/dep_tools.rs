@@ -7,7 +7,7 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 use std::fmt::Result as FmtResult;
 use std::io::Error as IoError;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 use std::process::Output;
 
@@ -27,7 +27,7 @@ where
         &self,
         source: String,
         version: Version,
-        out_dir: &PathBuf,
+        out_dir: &Path,
     ) -> Result<(), FetchError<E>>;
 }
 
@@ -57,7 +57,7 @@ impl DepTool<GitCmdError> for Git {
         "git".to_string()
     }
 
-    fn fetch(&self, src: String, Version(vsn): Version, out_dir: &PathBuf)
+    fn fetch(&self, src: String, Version(vsn): Version, out_dir: &Path)
         -> Result<(), FetchError<GitCmdError>>
     {
         let gits_args = vec![
@@ -81,9 +81,8 @@ impl DepTool<GitCmdError> for Git {
                     };
                     if i == 0 {
                         return Err(FetchError::RetrieveFailed{source});
-                    } else {
-                        return Err(FetchError::VersionChangeFailed{source});
                     }
+                    return Err(FetchError::VersionChangeFailed{source});
                 }
             };
 
@@ -94,9 +93,8 @@ impl DepTool<GitCmdError> for Git {
                 };
                 if i == 0 {
                     return Err(FetchError::RetrieveFailed{source});
-                } else {
-                    return Err(FetchError::VersionChangeFailed{source});
                 }
+                return Err(FetchError::VersionChangeFailed{source});
             }
         }
 

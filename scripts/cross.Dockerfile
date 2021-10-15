@@ -10,7 +10,8 @@ RUN \
         --show-error \
         --location \
         https://get.docker.com \
-    | sh
+    | VERSION=20.10 \
+        sh
 
 RUN \
     cargo install \

@@ -302,7 +302,7 @@ fn create_test_setup_and_run_tool(
     -> Layout
 {
     let layout =
-        test_setup::create(root_test_dir_name, &deps, &deps_commit_nums);
+        test_setup::create(root_test_dir_name, deps, &deps_commit_nums);
 
     run_tool(&layout, deps, deps_commit_nums);
 
@@ -337,9 +337,9 @@ fn run_tool(
     }
 
     fs_check::assert_contents(
-        &proj_dir,
+        proj_dir,
         &Node::Dir(hashmap!{
-            "dpnd.txt" => Node::File(&deps_file_conts),
+            "dpnd.txt" => Node::File(deps_file_conts),
             "deps" => Node::Dir(deps_output_dir),
         }),
     );

@@ -88,7 +88,7 @@ fn main() {
                 let msg = render_errors::render_install_error(
                     err,
                     &cwd,
-                    &deps_file_name,
+                    deps_file_name,
                 );
                 eprintln!("{}", msg);
                 process::exit(1);

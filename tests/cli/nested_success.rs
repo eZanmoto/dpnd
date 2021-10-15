@@ -20,13 +20,13 @@ fn nested_deps_pulled_correctly_with_long_flag() {
     check_nested_deps_pulled_correctly(
         "nested_deps_pulled_correctly_with_long_flag",
         "--recursive",
-    )
+    );
 }
 
 fn check_nested_deps_pulled_correctly(root_test_dir_name: &str, flag: &str) {
     let test_deps = success::test_deps();
     let Layout{dep_srcs_dir, proj_dir, ..} =
-        test_setup::create(&root_test_dir_name, &test_deps, &hashmap!{});
+        test_setup::create(root_test_dir_name, &test_deps, &hashmap!{});
     let deps_file_conts = indoc!{"
         deps
 
@@ -82,7 +82,7 @@ fn nested_deps_pulled_correctly_with_short_flag() {
     check_nested_deps_pulled_correctly(
         "nested_deps_pulled_correctly_with_short_flag",
         "-r",
-    )
+    );
 }
 
 #[test]

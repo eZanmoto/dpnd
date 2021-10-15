@@ -33,11 +33,11 @@ pub struct Installer<'a, E> {
 }
 
 impl<'a> Installer<'a, GitCmdError> {
-    pub fn install(&self, cwd: &PathBuf, recurse: bool)
+    pub fn install(&self, cwd: &Path, recurse: bool)
         -> Result<(), InstallError<GitCmdError>>
     {
         let (proj_dir, deps_file_path, raw_deps_spec) =
-            match read_deps_file(&cwd, &self.deps_file_name) {
+            match read_deps_file(cwd, &self.deps_file_name) {
                 Ok(maybe_v) => {
                     if let Some(v) = maybe_v {
                         v
@@ -66,7 +66,7 @@ impl<'a> Installer<'a, GitCmdError> {
                     path: deps_file_path.clone(),
                 })?;
 
-            self.install_proj_deps(&proj_dir, &conf)
+            self.install_proj_deps(&proj_dir, conf)
                 .context(InstallProjDepsFailed{dep_name})?;
 
             if !recurse {
@@ -101,7 +101,7 @@ impl<'a> Installer<'a, GitCmdError> {
 
     fn install_proj_deps<'b>(
         &self,
-        proj_dir: &PathBuf,
+        proj_dir: &Path,
         conf: &DepsConf<'b, GitCmdError>,
     )
         -> Result<(), InstallProjDepsError<GitCmdError>>
@@ -290,7 +290,7 @@ fn try_read<P: AsRef<Path>>(path: P) -> Result<Option<Vec<u8>>, IoError> {
     }
 }
 
-#[allow(clippy::pub_enum_variant_names)]
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Snafu)]
 pub enum InstallProjDepsError<E>
 where
@@ -306,7 +306,7 @@ where
 // `read_deps_file` reads the file named `deps_file_name` in `start` or the
 // deepest of `start`s ancestor directories that contains a file named
 // `deps_file_name`.
-fn read_deps_file(start: &PathBuf, deps_file_name: &str)
+fn read_deps_file(start: &Path, deps_file_name: &str)
     -> Result<Option<(PathBuf, PathBuf, Vec<u8>)>, ReadDepsFileError>
 {
     let mut dir = start.to_path_buf();
@@ -412,7 +412,7 @@ pub enum ParseDepsError {
 }
 
 fn install_deps<'a>(
-    output_dir: &PathBuf,
+    output_dir: &Path,
     state_file_path: PathBuf,
     state_file_exists: bool,
     mut cur_deps: HashMap<String, Dependency<'a, GitCmdError>>,
@@ -484,7 +484,7 @@ fn install_deps<'a>(
     Ok(())
 }
 
-#[allow(clippy::pub_enum_variant_names)]
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Snafu)]
 pub enum InstallDepsError<E>
 where
@@ -551,7 +551,7 @@ enum Action {
 }
 
 fn write_state_file<'a>(
-    state_file_path: &PathBuf,
+    state_file_path: &Path,
     cur_deps: &HashMap<String, Dependency<'a, GitCmdError>>,
 )
     -> Result<(), WriteStateFileError>

@@ -232,7 +232,7 @@ fn unavailable_git_proj_vsn() {
              checkout bad_commit` failed with the following output:
 
             [!] error: pathspec 'bad_commit' did not match any file(s) known \
-             to git.
+             to git
 
         "});
 }

@@ -35,7 +35,7 @@ pub fn create(
     let scratch_dir = create_dir(root_dir.clone(), "scratch");
     let proj_dir = create_dir(root_dir, "proj");
 
-    create_dep_srcs(&dep_srcs_dir, &scratch_dir, &deps);
+    create_dep_srcs(&dep_srcs_dir, &scratch_dir, deps);
 
     let mut deps_commit_hashes = hashmap!{};
     for dep_src_name in deps.keys() {
@@ -48,7 +48,7 @@ pub fn create(
     let deps_file_conts = write_test_deps_file(
         &proj_dir,
         &deps_commit_hashes,
-        &deps_commit_nums,
+        deps_commit_nums,
     );
 
     Layout{
@@ -61,8 +61,8 @@ pub fn create(
 
 pub struct Layout {
     pub dep_srcs_dir: String,
-    pub deps_commit_hashes: HashMap<String, Vec<String>>,
     pub proj_dir: String,
+    pub deps_commit_hashes: HashMap<String, Vec<String>>,
     pub deps_file_conts: String,
 }
 
@@ -89,7 +89,7 @@ fn create_dep_srcs(
         create_bare_git_repo(
             &create_dir(dep_srcs_dir.to_owned(), &dep_src_dir_name),
             &create_dir(scratch_dir.to_string(), dep_src_name),
-            &commits,
+            commits,
         );
     }
 }
@@ -125,7 +125,7 @@ pub fn create_bare_git_repo(
         }
     }
 
-    let git_args = &["clone", "--bare", &scratch_dir, &repo_dir];
+    let git_args = &["clone", "--bare", scratch_dir, repo_dir];
     run_cmd(scratch_dir, "git", git_args);
 }
 
@@ -161,7 +161,7 @@ where
 // `get_repo_hashes` returns hashes in chronological order, i.e. the first
 // entry contains the hash of the oldest commit.
 fn get_repo_hashes(repo_dir: &str) -> Vec<String> {
-    run_cmd(&repo_dir, "git", &["log", "--reverse", "--format=%H"])
+    run_cmd(repo_dir, "git", &["log", "--reverse", "--format=%H"])
         .split_terminator('\n')
         .map(ToString::to_string)
         .collect()
@@ -192,7 +192,7 @@ pub fn write_test_deps_file(
             deps_file_conts = deps_file_conts,
             dep_name = dep_name,
             dep_vsn = deps_commit_hashes[*dep_name][*dep_commit_num],
-        )
+        );
     }
 
     let deps_file = format!("{}/dpnd.txt", proj_dir);
@@ -210,7 +210,7 @@ where
     let git_exec_path = run_cmd(dir.as_ref(), "git", &["--exec-path"]);
 
     let git_exec_path = git_exec_path
-        .strip_suffix("\n")
+        .strip_suffix('\n')
         .expect("`git --exec-path` output didn't end with a newline");
 
     let git_exec_path = git_exec_path.to_owned();
