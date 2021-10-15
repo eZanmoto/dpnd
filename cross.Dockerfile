@@ -2,7 +2,7 @@
 # Use of this source code is governed by an MIT
 # licence that can be found in the LICENCE file.
 
-FROM dpnd.build:latest
+FROM ezanmoto/dpnd.build:latest
 
 RUN \
     curl \

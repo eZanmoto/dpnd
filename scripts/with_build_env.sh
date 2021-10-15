@@ -6,28 +6,35 @@
 
 set -o errexit
 
-build_img='dpnd.build'
+org='ezanmoto'
+proj='dpnd'
+build_img="$org/$proj.build"
 
 bash scripts/docker_rbuild.sh \
     "$build_img" \
     "latest" \
-    --file='scripts/build.Dockerfile' \
+    --file='build.Dockerfile' \
     scripts
+
+vol_name="$org.$proj.cargo_cache"
+vol_dir='/cargo'
 
 docker run \
     --rm \
-    --mount='type=volume,src=dpnd_cargo_cache,dst=/cargo' \
+    --mount="type=volume,src=$vol_name,dst=$vol_dir" \
     "$build_img:latest" \
-    chmod 0777 /cargo
+    chmod 0777 "$vol_dir"
+
+work_dir='/app'
 
 docker run \
     --interactive \
     --tty \
     --rm \
-    --mount='type=volume,src=dpnd_cargo_cache,dst=/cargo' \
-    --env='CARGO_HOME=/cargo' \
-    --user="$(id -u):$(id -g)" \
-    --mount="type=bind,src=$(pwd),dst=/app" \
-    --workdir='/app' \
+    --mount="type=volume,src=$vol_name,dst=$vol_dir" \
+    --env="CARGO_HOME=$vol_dir" \
+    --user="$(id --user):$(id --group)" \
+    --mount="type=bind,src=$(pwd),dst=$work_dir" \
+    --workdir="$work_dir" \
     "$build_img:latest" \
     "$@"

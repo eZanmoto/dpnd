@@ -15,40 +15,48 @@ fi
 
 target="$1"
 
-cross_img='dpnd.cross'
+org='ezanmoto'
+proj='dpnd'
+build_img="$org/$proj.build"
+cross_img="$org/$proj.cross"
 
 # We build `dpnd.build:latest` first because `cross.Dockerfile` depends on it.
 bash scripts/docker_rbuild.sh \
-    "dpnd.build" \
+    "$build_img" \
     "latest" \
-    --file='scripts/build.Dockerfile' \
+    --file='build.Dockerfile' \
     scripts
 
 bash scripts/docker_rbuild.sh \
     "$cross_img" \
     "latest" \
-    --file='scripts/cross.Dockerfile' \
+    --file='cross.Dockerfile' \
     scripts
+
+vol_name="$org.$proj.cargo_cache"
+vol_dir='/cargo'
 
 docker run \
     --rm \
-    --mount='type=volume,src=dpnd_cargo_cache,dst=/cargo' \
+    --mount="type=volume,src=$vol_name,dst=$vol_dir" \
     "$cross_img:latest" \
-    chmod 0777 /cargo
+    chmod 0777 "$vol_dir"
+
+work_dir='/app'
 
 run_in_env() {
     # We run the `cross` build environment as `root` instead of using
-    # `--user=$(id -u):$(id -g)` because version 0.2.1 of `cross` requires the
-    # active user to have a username; see
+    # `--user=$(id --user):$(id --group)` because version 0.2.1 of `cross`
+    # requires the active user to have a username; see
     # <https://github.com/rust-embedded/cross/pull/505> for more details.
     docker run \
         --rm \
-        --mount='type=volume,src=dpnd_cargo_cache,dst=/cargo' \
-        --env='CARGO_HOME=/cargo' \
-        --mount="type=bind,src=$(pwd),dst=/app" \
-        --workdir='/app' \
+        --mount="type=volume,src=$vol_name,dst=$vol_dir" \
+        --env="CARGO_HOME=$vol_dir" \
+        --mount="type=bind,src=$(pwd),dst=$work_dir" \
+        --workdir="$work_dir" \
         --group-add=docker \
-        --mount="type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock" \
+        --mount='type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock' \
         "$cross_img:latest" \
         "$@"
 }
