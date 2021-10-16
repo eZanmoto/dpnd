@@ -258,14 +258,14 @@ fn tool_is_idempotent() {
 //     contents
 fn add_first_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "add_first_dep",
             &test_deps,
             hashmap!{},
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{"my_scripts" => 1},
     );
@@ -353,14 +353,14 @@ fn run_tool(
 //     contents
 fn add_second_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "add_second_dep",
             &test_deps,
             hashmap!{"my_scripts" => 1},
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{
             "my_scripts" => 1,
@@ -404,7 +404,7 @@ fn add_second_dep() {
 //     contents
 fn add_third_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "add_third_dep",
             &test_deps,
@@ -414,7 +414,7 @@ fn add_third_dep() {
             },
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{
             "my_scripts" => 1,
@@ -462,7 +462,7 @@ fn add_third_dep() {
 // Then the directory of the removed dependency is removed
 fn rm_third_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "rm_third_dep",
             &test_deps,
@@ -473,7 +473,7 @@ fn rm_third_dep() {
             },
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{
             "my_scripts" => 1,
@@ -516,7 +516,7 @@ fn rm_third_dep() {
 // Then the directory of the removed dependency is removed
 fn rm_second_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "rm_second_dep",
             &test_deps,
@@ -526,7 +526,7 @@ fn rm_second_dep() {
             },
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{"my_scripts" => 1},
     );
@@ -562,14 +562,14 @@ fn rm_second_dep() {
 // Then the directory of the removed dependency is removed
 fn rm_first_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "rm_first_dep",
             &test_deps,
             hashmap!{"my_scripts" => 1},
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{},
     );
@@ -610,15 +610,16 @@ fn add_after_rm() {
             hashmap!{"my_scripts" => 1},
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &layout.proj_dir,
+        &layout.deps_file,
         &layout.deps_commit_hashes,
         &hashmap!{},
     );
     let layout = Layout{deps_file_conts, ..layout};
     run_tool(&layout, &test_deps, hashmap!{});
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} = layout;
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
+        layout;
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{"my_scripts" => 1},
     );
@@ -655,14 +656,14 @@ fn add_after_rm() {
 //     with the correct contents
 fn upgrade_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "downgrade_dep",
             &test_deps,
             hashmap!{"my_scripts" => 0},
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{"my_scripts" => 1},
     );
@@ -699,14 +700,14 @@ fn upgrade_dep() {
 //     with the correct contents
 fn downgrade_dep() {
     let test_deps = test_deps();
-    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, ..} =
+    let Layout{dep_srcs_dir, proj_dir, deps_commit_hashes, deps_file, ..} =
         create_test_setup_and_run_tool(
             "upgrade_dep",
             &test_deps,
             hashmap!{"my_scripts" => 1},
         );
     let deps_file_conts = test_setup::write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         &hashmap!{"my_scripts" => 0},
     );

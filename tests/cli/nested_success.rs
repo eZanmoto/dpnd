@@ -137,6 +137,7 @@ fn check_nested_deps_not_pulled_without_recursion(test_name: &str)
         dep_srcs_dir,
         proj_dir,
         deps_commit_hashes,
+        deps_file,
         deps_file_conts: deps_file_conts.to_string(),
     }
 }

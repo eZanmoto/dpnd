@@ -45,8 +45,9 @@ pub fn create(
         );
     }
 
+    let deps_file = format!("{}/dpnd.txt", proj_dir);
     let deps_file_conts = write_test_deps_file(
-        &proj_dir,
+        &deps_file,
         &deps_commit_hashes,
         deps_commit_nums,
     );
@@ -55,6 +56,7 @@ pub fn create(
         dep_srcs_dir,
         proj_dir,
         deps_commit_hashes,
+        deps_file,
         deps_file_conts,
     }
 }
@@ -63,6 +65,7 @@ pub struct Layout {
     pub dep_srcs_dir: String,
     pub proj_dir: String,
     pub deps_commit_hashes: HashMap<String, Vec<String>>,
+    pub deps_file: String,
     pub deps_file_conts: String,
 }
 
@@ -168,7 +171,7 @@ fn get_repo_hashes(repo_dir: &str) -> Vec<String> {
 }
 
 pub fn write_test_deps_file(
-    proj_dir: &str,
+    deps_file: &str,
     deps_commit_hashes: &HashMap<String, Vec<String>>,
     deps_commit_nums: &HashMap<&str, usize>,
 )
@@ -195,9 +198,10 @@ pub fn write_test_deps_file(
         );
     }
 
-    let deps_file = format!("{}/dpnd.txt", proj_dir);
     fs::write(&deps_file, &deps_file_conts)
-        .expect("couldn't write dependency file");
+        .unwrap_or_else(|_|
+            panic!("couldn't write dependency file '{}'", deps_file)
+        );
 
     deps_file_conts
 }
